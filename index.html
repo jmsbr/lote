@@ -32,14 +32,13 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
 
         // --- CONSTANTES DO SISTEMA ---
         const DB_ID = 'f055f4783a2855129c04'; 
         const API_URL = `https://api.npoint.io/${DB_ID}`;
 
         // --- HELPER DE RENDERIZAÇÃO SEGURA (CORREÇÃO DE ERRO #130) ---
-        // Garante que APENAS strings ou números sejam renderizados pelo React.
         const safeRender = (val) => {
             if (val === null || val === undefined) return '';
             if (typeof val === 'string' || typeof val === 'number') return val;
@@ -100,6 +99,9 @@
             const [isLoading, setIsLoading] = useState(false);
             const [toasts, setToasts] = useState([]);
             
+            // Controle de Salvamento (Correção do "Sumir do Nada")
+            const isSaving = useRef(false);
+
             // Estados de Formulário
             const [newBatchId, setNewBatchId] = useState('');
             const [batchType, setBatchType] = useState('LM');
@@ -166,9 +168,13 @@
             // --- API ---
 
             const fetchData = async (silent = false) => {
+                // Se estiver salvando, não busca dados novos para evitar sobreposição (Correção)
+                if (isSaving.current) return;
+
                 if (!silent) setIsLoading(true);
                 try {
-                    const res = await fetch(API_URL);
+                    // Adiciona timestamp para evitar cache do navegador/servidor
+                    const res = await fetch(`${API_URL}?t=${Date.now()}`);
                     if (res.ok) {
                         let data = await res.json();
                         if (!Array.isArray(data)) data = [];
@@ -185,6 +191,7 @@
             };
 
             const syncData = async (newData) => {
+                isSaving.current = true; // Bloqueia atualizações externas
                 setIsLoading(true);
                 try {
                     await fetch(API_URL, {
@@ -192,7 +199,7 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(newData)
                     });
-                    setBatches(newData);
+                    setBatches(newData); // Atualiza tela imediatamente
                     checkCriticalBatches(newData);
                     return true;
                 } catch (error) {
@@ -201,6 +208,8 @@
                     return false;
                 } finally {
                     setIsLoading(false);
+                    // Libera para atualizações externas após um tempo de segurança
+                    setTimeout(() => { isSaving.current = false; }, 2000);
                 }
             };
 
@@ -240,8 +249,8 @@
                 if (!newBatchId.trim()) return;
 
                 try {
-                    const res = await fetch(API_URL);
-                    // CORREÇÃO: Ler apenas uma vez
+                    // Busca dados frescos com bypass de cache
+                    const res = await fetch(`${API_URL}?t=${Date.now()}`);
                     const rawData = await res.json();
                     const currentData = Array.isArray(rawData) ? rawData : [];
                     
@@ -271,7 +280,7 @@
                 if (!selectedBatch || !dispatcherName.trim()) return;
 
                 try {
-                    const res = await fetch(API_URL);
+                    const res = await fetch(`${API_URL}?t=${Date.now()}`);
                     const rawData = await res.json();
                     const currentData = Array.isArray(rawData) ? rawData : [];
 
@@ -302,7 +311,7 @@
             const handleDelete = async (id) => {
                 if (window.confirm("Excluir este registro?")) {
                     try {
-                        const res = await fetch(API_URL);
+                        const res = await fetch(`${API_URL}?t=${Date.now()}`);
                         const rawData = await res.json();
                         const currentData = Array.isArray(rawData) ? rawData : [];
                         
