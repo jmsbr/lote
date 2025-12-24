@@ -40,7 +40,6 @@
 
         // --- HELPER DE RENDERIZAÇÃO SEGURA (CORREÇÃO DE ERRO #130) ---
         // Garante que APENAS strings ou números sejam renderizados pelo React.
-        // Qualquer objeto, array ou nulo é convertido para string vazia.
         const safeRender = (val) => {
             if (val === null || val === undefined) return '';
             if (typeof val === 'string' || typeof val === 'number') return val;
@@ -133,7 +132,7 @@
                     const now = ctx.currentTime;
                     osc.type = 'square';
                     
-                    // Bip duplo (Agudo -> Grave)
+                    // Bip duplo
                     osc.frequency.setValueAtTime(880, now);
                     gain.gain.setValueAtTime(0.1, now);
                     gain.gain.setValueAtTime(0.01, now + 0.1);
@@ -145,7 +144,7 @@
                     osc.start(now);
                     osc.stop(now + 0.6);
                 } catch (e) {
-                    console.warn("Áudio bloqueado pelo navegador", e);
+                    console.warn("Áudio bloqueado", e);
                 }
             };
 
@@ -234,7 +233,7 @@
                 }
             }, [criticalBatches.length]);
 
-            // --- HANDLERS ---
+            // --- HANDLERS (COM CORREÇÃO DE LEITURA DUPLA) ---
 
             const handleAddBatch = async (e) => {
                 e.preventDefault();
@@ -242,7 +241,9 @@
 
                 try {
                     const res = await fetch(API_URL);
-                    const currentData = Array.isArray(await res.json()) ? await res.json() : [];
+                    // CORREÇÃO: Ler apenas uma vez
+                    const rawData = await res.json();
+                    const currentData = Array.isArray(rawData) ? rawData : [];
                     
                     const newBatch = {
                         id: Date.now().toString(),
@@ -260,6 +261,7 @@
                         addToast("Lote emitido!", "success");
                     }
                 } catch (error) {
+                    console.error(error);
                     addToast("Erro ao sincronizar.", "error");
                 }
             };
@@ -270,7 +272,8 @@
 
                 try {
                     const res = await fetch(API_URL);
-                    const currentData = await res.json();
+                    const rawData = await res.json();
+                    const currentData = Array.isArray(rawData) ? rawData : [];
 
                     const updatedList = currentData.map(item => {
                         if (item.id === selectedBatch.id) {
@@ -300,7 +303,9 @@
                 if (window.confirm("Excluir este registro?")) {
                     try {
                         const res = await fetch(API_URL);
-                        const currentData = await res.json();
+                        const rawData = await res.json();
+                        const currentData = Array.isArray(rawData) ? rawData : [];
+                        
                         const updatedList = currentData.filter(item => item.id !== id);
                         const success = await syncData(updatedList);
                         if (success) addToast("Removido.", "info");
