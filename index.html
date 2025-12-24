@@ -35,17 +35,14 @@
         const { useState, useEffect, useRef } = React;
 
         // --- CONFIGURAÇÃO DO BANCO DE DADOS ---
-        // 1. Crie um novo JSON em npoint.io com o conteúdo: []
-        // 2. Copie o ID da URL e cole abaixo entre as aspas.
-        const DB_ID = '642598732497662e240a'; // <--- COLOQUE SEU NOVO ID AQUI
-        
+        const DB_ID = '642598732497662e240a'; 
         const API_URL = `https://api.npoint.io/${DB_ID}`;
 
-        // --- HELPER DE RENDERIZAÇÃO SEGURA (CORREÇÃO DE ERRO #130) ---
+        // --- HELPER DE RENDERIZAÇÃO SEGURA ---
         const safeRender = (val) => {
             if (val === null || val === undefined) return '';
             if (typeof val === 'string' || typeof val === 'number') return val;
-            return ''; // Bloqueia objetos e evita o crash
+            return ''; 
         };
 
         // --- SISTEMA DE ÍCONES (SVG NATIVO) ---
@@ -171,13 +168,18 @@
             // --- API ---
 
             const fetchData = async (silent = false) => {
-                // Se estiver salvando, não busca dados novos para evitar sobreposição (Correção)
+                // Se estiver salvando, não busca dados novos para evitar sobreposição
                 if (isSaving.current) return;
 
                 if (!silent) setIsLoading(true);
                 try {
-                    // Adiciona timestamp para evitar cache do navegador/servidor
-                    const res = await fetch(`${API_URL}?t=${Date.now()}`);
+                    // Headers anti-cache agressivos
+                    const headers = { 
+                        'Cache-Control': 'no-cache, no-store, must-revalidate',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
+                    };
+                    const res = await fetch(`${API_URL}?t=${Date.now()}`, { headers });
                     if (res.ok) {
                         let data = await res.json();
                         if (!Array.isArray(data)) data = [];
@@ -199,7 +201,10 @@
                 try {
                     await fetch(API_URL, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'Cache-Control': 'no-cache'
+                        },
                         body: JSON.stringify(newData)
                     });
                     setBatches(newData); // Atualiza tela imediatamente
@@ -211,8 +216,8 @@
                     return false;
                 } finally {
                     setIsLoading(false);
-                    // Libera para atualizações externas após um tempo de segurança
-                    setTimeout(() => { isSaving.current = false; }, 2000);
+                    // Aumentado para 5s para garantir que o cache do npoint limpe
+                    setTimeout(() => { isSaving.current = false; }, 5000);
                 }
             };
 
@@ -245,7 +250,7 @@
                 }
             }, [criticalBatches.length]);
 
-            // --- HANDLERS (COM CORREÇÃO DE LEITURA DUPLA) ---
+            // --- HANDLERS ---
 
             const handleAddBatch = async (e) => {
                 e.preventDefault();
@@ -253,7 +258,8 @@
 
                 try {
                     // Busca dados frescos com bypass de cache
-                    const res = await fetch(`${API_URL}?t=${Date.now()}`);
+                    const headers = { 'Cache-Control': 'no-cache' };
+                    const res = await fetch(`${API_URL}?t=${Date.now()}`, { headers });
                     const rawData = await res.json();
                     const currentData = Array.isArray(rawData) ? rawData : [];
                     
@@ -283,7 +289,8 @@
                 if (!selectedBatch || !dispatcherName.trim()) return;
 
                 try {
-                    const res = await fetch(`${API_URL}?t=${Date.now()}`);
+                    const headers = { 'Cache-Control': 'no-cache' };
+                    const res = await fetch(`${API_URL}?t=${Date.now()}`, { headers });
                     const rawData = await res.json();
                     const currentData = Array.isArray(rawData) ? rawData : [];
 
@@ -314,7 +321,8 @@
             const handleDelete = async (id) => {
                 if (window.confirm("Excluir este registro?")) {
                     try {
-                        const res = await fetch(`${API_URL}?t=${Date.now()}`);
+                        const headers = { 'Cache-Control': 'no-cache' };
+                        const res = await fetch(`${API_URL}?t=${Date.now()}`, { headers });
                         const rawData = await res.json();
                         const currentData = Array.isArray(rawData) ? rawData : [];
                         
