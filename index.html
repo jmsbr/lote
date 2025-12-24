@@ -8,11 +8,11 @@
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React e ReactDOM (Versões de Produção para estabilidade) -->
+    <!-- React e ReactDOM (Versões de Produção) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     
-    <!-- Babel para compilar JSX no navegador -->
+    <!-- Babel para compilar JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
     <style>
@@ -38,8 +38,16 @@
         const DB_ID = 'f055f4783a2855129c04'; 
         const API_URL = `https://api.npoint.io/${DB_ID}`;
 
-        // --- SISTEMA DE ÍCONES (Nativo SVG para corrigir Erro #130) ---
-        // Criamos os ícones como componentes React reais aqui mesmo
+        // --- HELPER DE RENDERIZAÇÃO SEGURA (CORREÇÃO DE ERRO #130) ---
+        // Garante que APENAS strings ou números sejam renderizados pelo React.
+        // Qualquer objeto, array ou nulo é convertido para string vazia.
+        const safeRender = (val) => {
+            if (val === null || val === undefined) return '';
+            if (typeof val === 'string' || typeof val === 'number') return val;
+            return ''; // Bloqueia objetos e evita o crash
+        };
+
+        // --- SISTEMA DE ÍCONES (SVG NATIVO) ---
         const IconBase = ({ children, ...props }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>{children}</svg>
         );
@@ -79,16 +87,10 @@
             return (
                 <div className={`flex items-center gap-3 px-6 py-4 rounded-lg shadow-xl text-white min-w-[300px] transition-opacity duration-300 ${styles[type] || styles.info}`}>
                     <IconComponent className="w-5 h-5" />
-                    <span className="font-medium text-sm">{message}</span>
+                    <span className="font-medium text-sm">{safeRender(message)}</span>
                     <button onClick={() => onClose(id)} className="ml-auto hover:opacity-80"><X className="w-4 h-4" /></button>
                 </div>
             );
-        };
-
-        // --- HELPER SEGURO PARA RENDERIZAR VALORES ---
-        const safeRender = (val) => {
-            if (typeof val === 'object' && val !== null) return ''; // Previne o erro #130
-            return val;
         };
 
         // --- APLICAÇÃO PRINCIPAL ---
@@ -148,7 +150,7 @@
             };
 
             const addToast = (message, type = 'info') => {
-                setToasts(prev => [...prev, { id: Date.now(), message, type }]);
+                setToasts(prev => [...prev, { id: Date.now(), message: safeRender(message), type }]);
             };
 
             const removeToast = (id) => {
@@ -352,7 +354,7 @@
                         <div className="sticky top-0 z-50 bg-red-600 text-white p-3 shadow-md flex justify-center items-center gap-3 animate-pulse print-hidden">
                         <Volume2 className="w-6 h-6 animate-bounce" />
                         <div className="text-center font-bold">
-                            ATENÇÃO: Existem {criticalBatches.length} lote(s) do dia anterior pendentes!
+                            ATENÇÃO: Existem {safeRender(criticalBatches.length)} lote(s) do dia anterior pendentes!
                         </div>
                         <button onClick={playSound} className="ml-2 bg-red-800 px-3 py-1 rounded text-xs hover:bg-red-900 border border-red-400 font-bold transition-colors">
                             Testar Som / Ativar
@@ -373,7 +375,7 @@
                             </div>
                         </div>
                         <div className={`px-6 py-2 rounded-lg flex items-center gap-3 ${pendingCount > 0 ? 'bg-red-600 shadow-lg shadow-red-900/20' : 'bg-green-600 shadow-lg shadow-green-900/20'}`}>
-                            <span className="text-3xl font-bold">{pendingCount}</span>
+                            <span className="text-3xl font-bold">{safeRender(pendingCount)}</span>
                             <div className="flex flex-col text-xs font-semibold uppercase leading-tight"><span>Lotes</span><span>Pendentes</span></div>
                         </div>
                         </div>
