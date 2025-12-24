@@ -1,39 +1,95 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, Truck, AlertTriangle, CheckCircle, Search, Trash2, 
-  Clock, Package, FileSpreadsheet, Printer, User, X, Database, Settings, RefreshCw, Lock, Key 
+  Clock, Package, FileSpreadsheet, Printer, User, X, Settings, 
+  RefreshCw, Lock, Key, LogOut, Volume2, Database
 } from 'lucide-react';
 
+// --- CONSTANTS ---
 const ADMIN_PASSWORD = 'PEDROAMARAL';
+const DEFAULT_DB_ID = 'f055f4783a2855129c04'; // ID fornecido pelo usuário
+
+// --- SOUND HELPER ---
+const playAlertSound = () => {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    // Configuração do som (Bip de Alerta - A5 para A4)
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.setValueAtTime(440, ctx.currentTime + 0.1);
+    
+    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+
+    osc.start();
+    osc.stop(ctx.currentTime + 0.5);
+  } catch (e) {
+    console.error("Audio play failed", e);
+  }
+};
+
+// --- TOAST COMPONENT ---
+const Toast = ({ message, type, onClose }) => {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 3000);
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  const bgColors = {
+    success: 'bg-green-600',
+    error: 'bg-red-600',
+    info: 'bg-blue-600'
+  };
+
+  return (
+    <div className={`${bgColors[type] || 'bg-slate-800'} text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-3 animate-in slide-in-from-top-2 fade-in duration-300 pointer-events-auto min-w-[300px]`}>
+      {type === 'success' && <CheckCircle className="w-5 h-5" />}
+      {type === 'error' && <AlertTriangle className="w-5 h-5" />}
+      <span className="font-medium">{message}</span>
+      <button onClick={onClose} className="ml-auto hover:opacity-75"><X className="w-4 h-4" /></button>
+    </div>
+  );
+};
 
 export default function App() {
-  // --- ESTADOS ---
-  const [batches, setBatches] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  
+  // --- STATES ---
   // Configuração do npoint.io
-  const [dbId, setDbId] = useState(() => localStorage.getItem('logistica_npoint_id') || '8edbde1b2052893fd5ee');
-  const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [dbId, setDbId] = useState(() => localStorage.getItem('logistica_npoint_id') || DEFAULT_DB_ID);
+  
+  const [batches, setBatches] = useState([]);
+  const [criticalBatches, setCriticalBatches] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [toasts, setToasts] = useState([]);
 
-  // Estados de Autenticação (Configurações)
+  // Config/Admin States
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState(false);
 
-  // Estados de Formulário
+  // Form States
   const [newBatchId, setNewBatchId] = useState('');
-  const [batchType, setBatchType] = useState('LM'); // LM ou BRE
+  const [batchType, setBatchType] = useState('LM');
   
-  // Estados de Filtro/Busca
+  // Filter/Search States
   const [filter, setFilter] = useState('pending');
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Estados do Modal de Confirmação
+  // Confirmation Modal States
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [batchToDispatch, setBatchToDispatch] = useState(null);
   const [dispatcherName, setDispatcherName] = useState('');
 
-  // --- FUNÇÕES DE BANCO DE DADOS (API npoint.io) ---
+  // --- NPOINT API FUNCTIONS ---
   
   const getApiUrl = () => `https://api.npoint.io/${dbId}`;
 
@@ -44,10 +100,29 @@ export default function App() {
       const response = await fetch(getApiUrl());
       if (response.ok) {
         const data = await response.json();
-        setBatches(Array.isArray(data) ? data : []);
+        const loadedBatches = Array.isArray(data) ? data : [];
+        
+        // Ordenar: Mais recentes primeiro
+        loadedBatches.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        
+        setBatches(loadedBatches);
+
+        // --- VERIFICAÇÃO DE LOTES ATRASADOS (CRÍTICO) ---
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Zera hora para comparar apenas a data
+
+        const late = loadedBatches.filter(b => {
+          if (b.status !== 'pending') return false;
+          const batchDate = new Date(b.createdAt);
+          // Se a data do lote for menor que hoje (00:00), é do dia anterior
+          return batchDate < today;
+        });
+
+        setCriticalBatches(late);
       }
     } catch (error) {
       console.error("Erro ao buscar dados:", error);
+      // Não mostramos toast de erro no polling para não inundar a tela
     }
   };
 
@@ -62,24 +137,28 @@ export default function App() {
         body: JSON.stringify(newData)
       });
       setBatches(newData);
+      
+      // Recalcular críticos após salvar localmente (otimização visual)
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const late = newData.filter(b => {
+        if (b.status !== 'pending') return false;
+        const batchDate = new Date(b.createdAt);
+        return batchDate < today;
+      });
+      setCriticalBatches(late);
+      
+      return true;
     } catch (error) {
       console.error("Erro ao salvar:", error);
-      alert("Erro de conexão ao salvar no npoint.");
+      showToast("Erro de conexão ao salvar no npoint.", "error");
+      return false;
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 3. Resetar Banco (Limpar Tudo)
-  const handleResetDatabase = async () => {
-    if (window.confirm("ATENÇÃO: Isso apagará TODOS os registros do banco de dados para começar do zero.\n\nTem certeza que deseja continuar?")) {
-      await saveData([]); // Envia lista vazia
-      alert("Banco de dados limpo com sucesso! Pode começar a utilizar.");
-      closeConfig();
-    }
-  };
-
-  // --- EFEITOS ---
+  // --- EFFECTS ---
 
   // Polling: Busca dados a cada 3 segundos
   useEffect(() => {
@@ -90,54 +169,33 @@ export default function App() {
     }
   }, [dbId]);
 
-  // --- FUNÇÕES DE CONFIGURAÇÃO E SENHA ---
-
-  const openConfig = () => {
-    setIsConfigOpen(true);
-    setIsAdminAuthenticated(false); // Reseta auth ao abrir
-    setPasswordInput('');
-    setPasswordError(false);
-  };
-
-  const closeConfig = () => {
-    setIsConfigOpen(false);
-    setIsAdminAuthenticated(false);
-    setPasswordInput('');
-  };
-
-  const handleLoginSubmit = (e) => {
-    e.preventDefault();
-    if (passwordInput === ADMIN_PASSWORD) {
-      setIsAdminAuthenticated(true);
-      setPasswordError(false);
-    } else {
-      setPasswordError(true);
-      setPasswordInput('');
+  // Audio Alert Effect
+  useEffect(() => {
+    if (criticalBatches.length > 0) {
+      const timer = setTimeout(() => playAlertSound(), 1000);
+      return () => clearTimeout(timer);
     }
+  }, [criticalBatches]);
+
+  // --- ACTIONS ---
+  const showToast = (message, type = 'info') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type }]);
   };
 
-  const handleSaveConfig = (e) => {
-    e.preventDefault();
-    const id = e.target.elements.npointId.value.trim();
-    if (id) {
-      localStorage.setItem('logistica_npoint_id', id);
-      setDbId(id);
-      closeConfig();
-      setTimeout(() => fetchData(), 500);
-    }
+  const removeToast = (id) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  // --- AÇÕES DO SISTEMA ---
-
-  // 1. Criar Lote
   const handleAddBatch = async (e) => {
     e.preventDefault();
     if (!newBatchId.trim() || !dbId) return;
 
+    // Buscar dados atuais para garantir que não sobrescrevemos
     try {
       const response = await fetch(getApiUrl());
       const currentBatches = Array.isArray(await response.json()) ? await response.json() : [];
-      
+
       const newBatch = {
         id: Date.now().toString(),
         code: newBatchId.toUpperCase(),
@@ -149,19 +207,23 @@ export default function App() {
       };
 
       const updatedBatches = [newBatch, ...currentBatches];
-      await saveData(updatedBatches);
-      setNewBatchId('');
+      
+      const success = await saveData(updatedBatches);
+      if (success) {
+        setNewBatchId('');
+        showToast("Lote emitido com sucesso!", "success");
+      }
     } catch (err) {
-      alert("Erro ao sincronizar. Tente novamente.");
+      showToast("Erro ao sincronizar antes de salvar.", "error");
     }
   };
 
-  // 2. Confirmar Expedição
   const handleConfirmDispatch = async (e) => {
     e.preventDefault();
     if (!batchToDispatch || !dispatcherName.trim()) return;
 
     try {
+      // Fetch fresh data
       const response = await fetch(getApiUrl());
       const currentBatches = await response.json();
 
@@ -177,29 +239,85 @@ export default function App() {
         return b;
       });
 
-      await saveData(updatedBatches);
-      setIsConfirmModalOpen(false);
-      setBatchToDispatch(null);
+      const success = await saveData(updatedBatches);
+      if (success) {
+        showToast("Expedição confirmada!", "success");
+        setIsConfirmModalOpen(false);
+        setBatchToDispatch(null);
+        setDispatcherName('');
+      }
     } catch (err) {
-      alert("Erro ao atualizar o lote.");
+      showToast("Erro ao atualizar o lote.", "error");
     }
   };
 
-  // 3. Deletar Item Único
   const handleDelete = async (id) => {
-    if (window.confirm('Excluir este registro?')) {
+    if (window.confirm('Excluir este registro permanentemente?')) {
       try {
         const response = await fetch(getApiUrl());
         const currentBatches = await response.json();
         const updatedBatches = currentBatches.filter(b => b.id !== id);
-        await saveData(updatedBatches);
+        
+        const success = await saveData(updatedBatches);
+        if (success) {
+          showToast("Registro excluído", "success");
+        }
       } catch (err) {
-        alert("Erro ao deletar.");
+        showToast("Erro ao deletar.", "error");
       }
     }
   };
 
-  // --- HELPERS E RENDERIZAÇÃO ---
+  const handleResetDatabase = async () => {
+    if (window.confirm("ATENÇÃO: Isso apagará TODOS os registros do banco de dados.\n\nTem certeza absoluta?")) {
+      const success = await saveData([]); // Envia lista vazia
+      if (success) {
+        showToast("Banco de dados limpo com sucesso!", "success");
+        closeConfig();
+      }
+    }
+  };
+
+  // --- CONFIG HANDLERS ---
+  const openConfig = () => {
+    setIsConfigOpen(true);
+    setIsAdminAuthenticated(false);
+    setPasswordInput('');
+    setPasswordError(false);
+  };
+
+  const closeConfig = () => {
+    setIsConfigOpen(false);
+    setIsAdminAuthenticated(false);
+    setPasswordInput('');
+  };
+
+  const handleLoginSubmit = (e) => {
+    e.preventDefault();
+    if (passwordInput === ADMIN_PASSWORD) {
+      setIsAdminAuthenticated(true);
+      setPasswordError(false);
+      showToast("Acesso de administrador concedido", "success");
+    } else {
+      setPasswordError(true);
+      setPasswordInput('');
+      showToast("Senha incorreta", "error");
+    }
+  };
+
+  const handleSaveConfig = (e) => {
+    e.preventDefault();
+    const id = e.target.elements.npointId.value.trim();
+    if (id) {
+      localStorage.setItem('logistica_npoint_id', id);
+      setDbId(id);
+      closeConfig();
+      showToast("Banco de dados conectado!", "success");
+      setTimeout(() => fetchData(), 500);
+    }
+  };
+
+  // --- UI HELPERS ---
   const exportToExcel = () => {
     let csvContent = "data:text/csv;charset=utf-8,ID;TIPO;STATUS;CRIADO EM;EXPEDIDO EM;RESPONSAVEL\n";
     filteredBatches.forEach(batch => {
@@ -216,7 +334,7 @@ export default function App() {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "relatorio_expedicao.csv");
+    link.setAttribute("download", `relatorio_logistica_${new Date().toISOString().slice(0,10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -224,13 +342,13 @@ export default function App() {
 
   const handlePrint = () => window.print();
 
-  const pendingCount = batches.filter(b => b.status === 'pending').length;
-  
   const filteredBatches = batches.filter(batch => {
     const matchesSearch = batch.code?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesFilter = filter === 'all' ? true : batch.status === filter;
     return matchesFilter && matchesSearch;
   });
+
+  const pendingCount = batches.filter(b => b.status === 'pending').length;
 
   const formatDate = (isoString) => {
     if (!isoString) return '-';
@@ -240,17 +358,46 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 font-sans text-slate-800 print:bg-white">
+    <div className="min-h-screen bg-slate-100 font-sans text-slate-800 print:bg-white pb-20">
       
+      {/* TOASTS */}
+      <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 print:hidden">
+        {toasts.map(toast => (
+          <Toast 
+            key={toast.id} 
+            message={toast.message} 
+            type={toast.type} 
+            onClose={() => removeToast(toast.id)} 
+          />
+        ))}
+      </div>
+
+      {/* CRITICAL ALERT BANNER */}
+      {criticalBatches.length > 0 && (
+        <div className="bg-red-600 text-white px-4 py-3 shadow-lg print:hidden animate-pulse sticky top-0 z-50 flex justify-center items-center gap-3">
+          <Volume2 className="w-6 h-6 animate-bounce" />
+          <div className="font-bold text-center">
+            ATENÇÃO: Existem {criticalBatches.length} lote(s) do dia anterior ainda pendentes!
+            <span className="block text-xs font-normal opacity-90">Verifique os itens marcados em vermelho escuro abaixo.</span>
+          </div>
+          <button 
+            onClick={playAlertSound}
+            className="ml-4 bg-red-800 hover:bg-red-900 px-3 py-1 rounded text-xs font-bold transition-colors border border-red-400"
+          >
+            TESTAR SOM
+          </button>
+        </div>
+      )}
+
       {/* HEADER */}
-      <header className="bg-blue-900 text-white p-4 shadow-lg sticky top-0 z-10 print:hidden">
+      <header className="bg-blue-900 text-white p-4 shadow-lg sticky top-[48px] print:static z-10 print:hidden">
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-2">
             <Truck className="w-8 h-8 text-yellow-400" />
             <div>
               <h1 className="text-xl font-bold">Logística Integrada</h1>
               <p className="text-xs text-blue-200 flex items-center gap-1">
-                {isLoading ? 'Salvando...' : 'Conectado'}
+                {isLoading ? 'Sincronizando...' : 'Online (npoint)'}
                 <span className={`w-2 h-2 rounded-full ${isLoading ? 'bg-yellow-400 animate-pulse' : 'bg-green-400'}`}></span>
               </p>
             </div>
@@ -260,11 +407,11 @@ export default function App() {
             <button 
               onClick={openConfig}
               className="p-2 hover:bg-blue-800 rounded-full transition-colors flex items-center gap-1"
-              title="Configurações e Limpeza"
+              title="Área Administrativa"
             >
               <Settings className="w-5 h-5 text-blue-200" />
             </button>
-            <div className={`flex items-center gap-3 px-6 py-2 rounded-lg ${pendingCount > 0 ? 'bg-red-600' : 'bg-green-600'}`}>
+            <div className={`flex items-center gap-3 px-6 py-2 rounded-lg transition-colors duration-300 ${pendingCount > 0 ? 'bg-red-600' : 'bg-green-600'}`}>
               <span className="text-2xl font-bold leading-none">{pendingCount}</span>
               <span className="text-xs uppercase font-semibold">Pendentes</span>
             </div>
@@ -274,28 +421,26 @@ export default function App() {
 
       <main className="max-w-6xl mx-auto p-4 print:p-0 print:max-w-none">
         
-        {/* MODAL DE CONFIGURAÇÃO (AGORA COM SENHA) */}
+        {/* ADMIN MODAL */}
         {isConfigOpen && (
           <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm print:hidden">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-8">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-8 animate-in zoom-in-95 duration-200">
               <div className="flex items-center justify-between mb-6 text-blue-900 border-b pb-4">
                 <div className="flex items-center gap-3">
                   {isAdminAuthenticated ? <Settings className="w-7 h-7" /> : <Lock className="w-7 h-7" />}
                   <h2 className="text-2xl font-bold">
-                    {isAdminAuthenticated ? 'Configurações' : 'Acesso Restrito'}
+                    {isAdminAuthenticated ? 'Painel Admin' : 'Acesso Restrito'}
                   </h2>
                 </div>
                 <button onClick={closeConfig}><X className="text-slate-400 hover:text-slate-600" /></button>
               </div>
               
               {!isAdminAuthenticated ? (
-                /* TELA DE LOGIN DO MODAL */
                 <form onSubmit={handleLoginSubmit} className="space-y-4">
                   <div className="bg-blue-50 p-4 rounded-lg text-sm text-blue-800 mb-4 flex gap-3 items-center">
-                    <Key className="w-5 h-5" />
-                    <span>Esta área contém configurações sensíveis do banco de dados.</span>
+                    <Key className="w-5 h-5 flex-shrink-0" />
+                    <span>Área exclusiva para gerenciamento avançado do sistema.</span>
                   </div>
-                  
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">Senha de Administrador</label>
                     <input 
@@ -310,17 +455,17 @@ export default function App() {
                         : 'border-slate-300 focus:border-blue-500'
                       }`}
                     />
-                    {passwordError && <p className="text-red-500 text-sm mt-1 font-bold text-center">Senha incorreta.</p>}
                   </div>
                   <button type="submit" className="w-full bg-blue-900 hover:bg-blue-800 text-white font-bold py-3 rounded-lg shadow-lg transition-colors">
                     ACESSAR
                   </button>
                 </form>
               ) : (
-                /* TELA DE CONFIGURAÇÃO (LIBERADA) */
-                <>
-                  <form onSubmit={handleSaveConfig} className="mb-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
-                    <label className="block text-sm font-bold text-slate-700 mb-2">ID do Banco de Dados (npoint.io)</label>
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
+                  <form onSubmit={handleSaveConfig} className="mb-8">
+                    <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                       <Database className="w-4 h-4"/> ID do Banco de Dados (npoint.io)
+                    </label>
                     <div className="flex gap-2">
                       <input 
                         name="npointId"
@@ -332,31 +477,41 @@ export default function App() {
                         Salvar
                       </button>
                     </div>
+                    <p className="text-xs text-slate-400 mt-2">Atual: {dbId}</p>
                   </form>
 
-                  <div className="border-t pt-6 animate-in fade-in slide-in-from-bottom-8 duration-500">
-                    <h3 className="text-red-600 font-bold mb-2 flex items-center gap-2">
+                  <div className="bg-red-50 border-2 border-red-100 rounded-xl p-6">
+                    <h3 className="text-red-700 font-bold mb-2 flex items-center gap-2">
                       <AlertTriangle className="w-5 h-5" /> Zona de Perigo
                     </h3>
-                    <p className="text-sm text-slate-500 mb-4">
-                      Deseja zerar o sistema? Esta ação é irreversível e apaga todo o histórico.
+                    <p className="text-sm text-red-600/80 mb-4">
+                      Ações aqui não podem ser desfeitas.
                     </p>
                     <button 
                       type="button"
                       onClick={handleResetDatabase}
-                      className="w-full border-2 border-red-100 bg-red-50 hover:bg-red-100 text-red-700 font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-colors"
+                      disabled={isLoading}
+                      className="w-full bg-white border-2 border-red-200 text-red-700 font-bold py-3 rounded-lg flex items-center justify-center gap-2 hover:bg-red-600 hover:text-white hover:border-red-600 transition-all shadow-sm"
                     >
-                      <Trash2 className="w-5 h-5" />
-                      LIMPAR BANCO DE DADOS
+                      {isLoading ? <RefreshCw className="w-5 h-5 animate-spin"/> : <Trash2 className="w-5 h-5" />}
+                      ZERAR BANCO DE DADOS
                     </button>
                   </div>
-                </>
+                  <div className="mt-6 flex justify-end">
+                    <button 
+                      onClick={() => setIsAdminAuthenticated(false)}
+                      className="text-slate-500 text-sm hover:text-slate-700 flex items-center gap-1"
+                    >
+                      <LogOut className="w-4 h-4"/> Sair do Admin
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>
         )}
 
-        {/* EMISSÃO DE LOTE */}
+        {/* EMISSION FORM */}
         <div className="bg-white p-6 rounded-xl shadow-md mb-6 border-l-8 border-blue-600 print:hidden">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <Package className="w-5 h-5 text-blue-600" />
@@ -370,10 +525,9 @@ export default function App() {
                 value={newBatchId}
                 onChange={(e) => setNewBatchId(e.target.value)}
                 placeholder="Ex: 12345ABC"
-                className="w-full p-3 border-2 border-slate-300 rounded-lg focus:border-blue-500 focus:outline-none text-lg uppercase"
+                className="w-full p-3 border-2 border-slate-300 rounded-lg focus:border-blue-500 focus:outline-none text-lg uppercase font-mono"
               />
             </div>
-            
             <div className="w-full md:w-48">
               <label className="block text-sm font-bold text-slate-600 mb-1">Tipo</label>
               <div className="flex bg-slate-100 p-1 rounded-lg border-2 border-slate-200">
@@ -393,11 +547,10 @@ export default function App() {
                 </button>
               </div>
             </div>
-
             <button 
               type="submit"
-              disabled={isLoading}
-              className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-bold py-3.5 px-8 rounded-lg flex items-center justify-center gap-2 transition-colors"
+              disabled={isLoading || !newBatchId.trim()}
+              className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold py-3.5 px-8 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-blue-200 shadow-lg active:scale-95 duration-100"
             >
               {isLoading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
               Emitir
@@ -405,84 +558,122 @@ export default function App() {
           </form>
         </div>
 
-        {/* FERRAMENTAS E LISTA */}
+        {/* TOOLS */}
         <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4 print:hidden">
-          <div className="flex bg-white p-1 rounded-lg shadow-sm">
-             <button onClick={() => setFilter('pending')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filter === 'pending' ? 'bg-red-100 text-red-700' : 'text-slate-500 hover:bg-slate-50'}`}>Pendentes</button>
-             <button onClick={() => setFilter('dispatched')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filter === 'dispatched' ? 'bg-green-100 text-green-700' : 'text-slate-500 hover:bg-slate-50'}`}>Expedidos</button>
-             <button onClick={() => setFilter('all')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filter === 'all' ? 'bg-blue-100 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}>Todos</button>
+          <div className="flex bg-white p-1 rounded-lg shadow-sm border border-slate-200">
+             <button onClick={() => setFilter('pending')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${filter === 'pending' ? 'bg-red-100 text-red-700 shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}>Pendentes</button>
+             <button onClick={() => setFilter('dispatched')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${filter === 'dispatched' ? 'bg-green-100 text-green-700 shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}>Expedidos</button>
+             <button onClick={() => setFilter('all')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${filter === 'all' ? 'bg-blue-100 text-blue-700 shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}>Todos</button>
           </div>
 
           <div className="flex gap-2">
-            <button onClick={exportToExcel} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-green-700 transition-colors">
+            <button onClick={exportToExcel} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-green-700 transition-colors shadow-sm">
               <FileSpreadsheet className="w-4 h-4" /> Excel
             </button>
-            <button onClick={handlePrint} className="flex items-center gap-2 bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-slate-700 transition-colors">
+            <button onClick={handlePrint} className="flex items-center gap-2 bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-slate-700 transition-colors shadow-sm">
               <Printer className="w-4 h-4" /> PDF
             </button>
           </div>
           
-          <div className="relative w-full md:w-auto">
-             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-             <input type="text" placeholder="Buscar..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9 pr-4 py-2 rounded-lg border border-slate-300 w-full focus:outline-none focus:border-blue-400" />
+          <div className="relative w-full md:w-auto group">
+             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+             <input type="text" placeholder="Buscar lote..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9 pr-4 py-2 rounded-lg border border-slate-300 w-full focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all" />
           </div>
         </div>
 
-        {/* LISTAGEM */}
+        {/* BATCH LIST */}
         <div className="space-y-3">
           {filteredBatches.length === 0 ? (
-            <div className="text-center py-10 text-slate-400 border-2 border-dashed border-slate-300 rounded-xl">
-              Nenhum registro encontrado. O sistema está pronto para uso.
+            <div className="text-center py-16 text-slate-400 border-2 border-dashed border-slate-300 rounded-xl bg-slate-50">
+              <Package className="w-12 h-12 mx-auto mb-2 text-slate-300" />
+              <p>Nenhum registro encontrado.</p>
             </div>
           ) : (
-            filteredBatches.map(batch => (
-              <div key={batch.id} className={`bg-white p-4 rounded-xl shadow-sm border-l-4 flex flex-col md:flex-row items-center justify-between gap-4 print:border border-slate-200 print:shadow-none ${batch.status === 'pending' ? 'border-l-red-500' : 'border-l-green-500 opacity-90'}`}>
-                <div className="flex-1 w-full">
-                  <div className="flex items-center gap-3 mb-2">
-                    <span className="text-xl font-bold font-mono text-slate-700">#{batch.code}</span>
-                    <span className={`text-xs px-2 py-1 rounded font-bold border ${batch.type === 'LM' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>{batch.type}</span>
+            filteredBatches.map(batch => {
+              const isCritical = criticalBatches.find(cb => cb.id === batch.id);
+
+              return (
+                <div key={batch.id} className={`bg-white p-4 rounded-xl shadow-sm border-l-4 flex flex-col md:flex-row items-center justify-between gap-4 print:border border-slate-200 print:shadow-none transition-all hover:shadow-md ${
+                  batch.status === 'pending' 
+                    ? (isCritical ? 'border-l-red-800 bg-red-50 ring-2 ring-red-200' : 'border-l-red-500') 
+                    : 'border-l-green-500 opacity-90'
+                }`}>
+                  <div className="flex-1 w-full">
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className="text-xl font-bold font-mono text-slate-700 tracking-wider">#{batch.code}</span>
+                      <span className={`text-xs px-2 py-1 rounded font-bold border ${batch.type === 'LM' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>{batch.type}</span>
+                      
+                      {batch.status === 'pending' ? (
+                        isCritical ? (
+                          <span className="bg-red-800 text-white text-xs px-2 py-1 rounded-full font-bold uppercase print:hidden animate-bounce flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3" /> ATRASADO
+                          </span>
+                        ) : (
+                          <span className="bg-red-100 text-red-700 text-xs px-2 py-1 rounded-full font-bold uppercase print:hidden animate-pulse">Pendente</span>
+                        )
+                      ) : (
+                        <span className="bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full font-bold uppercase print:hidden flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Expedido</span>
+                      )}
+                    </div>
                     
+                    <div className="text-sm text-slate-500 flex flex-wrap gap-x-6 gap-y-1">
+                      <span className={`flex items-center gap-1 ${isCritical ? 'text-red-700 font-bold' : ''}`}>
+                        <Clock className="w-3 h-3" /> Emissão: {formatDate(batch.createdAt)}
+                      </span>
+                      {batch.dispatchedAt && <span className="flex items-center gap-1 text-green-600 font-bold"><Truck className="w-3 h-3" /> Saída: {formatDate(batch.dispatchedAt)}</span>}
+                      {batch.dispatchedBy && <span className="flex items-center gap-1 text-slate-600 font-bold"><User className="w-3 h-3" /> Resp: {batch.dispatchedBy}</span>}
+                    </div>
+                  </div>
+
+                  <div className="print:hidden">
                     {batch.status === 'pending' ? (
-                      <span className="bg-red-100 text-red-700 text-xs px-2 py-1 rounded-full font-bold uppercase print:hidden">Pendente</span>
+                      <button 
+                        onClick={() => { setBatchToDispatch(batch); setDispatcherName(''); setIsConfirmModalOpen(true); }} 
+                        className={`${isCritical ? 'bg-red-700 hover:bg-red-800 shadow-red-300' : 'bg-green-600 hover:bg-green-700 shadow-green-200'} text-white font-bold py-2 px-6 rounded-lg flex items-center gap-2 transition-colors shadow-md active:scale-95`}
+                      >
+                        <Truck className="w-5 h-5" /> {isCritical ? 'RESOLVER AGORA' : 'EXPEDIR'}
+                      </button>
                     ) : (
-                      <span className="bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full font-bold uppercase print:hidden">Expedido</span>
+                      <button 
+                        onClick={() => handleDelete(batch.id)} 
+                        className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors" 
+                        title="Excluir Registro"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
                     )}
                   </div>
-                  
-                  <div className="text-sm text-slate-500 flex flex-wrap gap-x-6 gap-y-1">
-                    <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> Emissão: {formatDate(batch.createdAt)}</span>
-                    {batch.dispatchedAt && <span className="flex items-center gap-1 text-green-600 font-bold"><Truck className="w-3 h-3" /> Saída: {formatDate(batch.dispatchedAt)}</span>}
-                    {batch.dispatchedBy && <span className="flex items-center gap-1 text-slate-600 font-bold"><User className="w-3 h-3" /> Resp: {batch.dispatchedBy}</span>}
-                  </div>
                 </div>
-
-                <div className="print:hidden">
-                  {batch.status === 'pending' ? (
-                    <button onClick={() => { setBatchToDispatch(batch); setDispatcherName(''); setIsConfirmModalOpen(true); }} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg flex items-center gap-2 transition-colors">
-                      <Truck className="w-5 h-5" /> EXPEDIR
-                    </button>
-                  ) : (
-                    <button onClick={() => handleDelete(batch.id)} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors" title="Excluir"><Trash2 className="w-5 h-5" /></button>
-                  )}
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </main>
 
-      {/* MODAL DE CONFIRMAÇÃO DE EXPEDIÇÃO */}
+      {/* MODAL */}
       {isConfirmModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm print:hidden">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 animate-in fade-in zoom-in duration-200">
-            <h3 className="text-xl font-bold text-slate-800 mb-4 flex gap-2"><Truck className="text-green-600"/> Confirmar Expedição</h3>
-            <p className="mb-4 text-slate-600">Lote: <strong>{batchToDispatch?.code}</strong></p>
+            <h3 className="text-xl font-bold text-slate-800 mb-4 flex gap-2 items-center border-b pb-2"><Truck className="text-green-600"/> Confirmar Expedição</h3>
+            
+            <div className="bg-slate-50 p-3 rounded-lg mb-4 border border-slate-200">
+               <p className="text-xs text-slate-500 uppercase font-bold">Lote Selecionado</p>
+               <p className="text-2xl font-mono font-bold text-slate-800">#{batchToDispatch?.code}</p>
+            </div>
+
             <form onSubmit={handleConfirmDispatch}>
               <label className="block text-sm font-bold mb-2 text-slate-700">Quem está liberando? <span className="text-red-500">*</span></label>
-              <input autoFocus required value={dispatcherName} onChange={(e) => setDispatcherName(e.target.value)} placeholder="SEU NOME" className="w-full p-3 border-2 border-slate-300 rounded-lg mb-6 uppercase focus:border-green-500 outline-none" />
+              <input 
+                autoFocus 
+                required 
+                value={dispatcherName} 
+                onChange={(e) => setDispatcherName(e.target.value)} 
+                placeholder="DIGITE SEU NOME" 
+                className="w-full p-4 border-2 border-slate-300 rounded-lg mb-6 uppercase focus:border-green-500 outline-none font-bold text-center" 
+              />
               <div className="flex gap-3">
                 <button type="button" onClick={() => setIsConfirmModalOpen(false)} className="flex-1 py-3 bg-slate-100 font-bold rounded-lg text-slate-600 hover:bg-slate-200 transition-colors">Cancelar</button>
-                <button type="submit" disabled={isLoading} className="flex-1 py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors shadow-lg shadow-green-200">CONFIRMAR</button>
+                <button type="submit" disabled={!dispatcherName.trim()} className="flex-1 py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors shadow-lg shadow-green-200 disabled:opacity-50 disabled:cursor-not-allowed">CONFIRMAR</button>
               </div>
             </form>
           </div>
@@ -491,8 +682,8 @@ export default function App() {
 
       <style>{`
         @media print {
-          @page { margin: 2cm; }
-          body { background: white; }
+          @page { margin: 1cm; }
+          body { background: white; -webkit-print-color-adjust: exact; }
           .print\\:hidden { display: none !important; }
           .print\\:block { display: block !important; }
           .print\\:shadow-none { box-shadow: none !important; }
