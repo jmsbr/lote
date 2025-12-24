@@ -64,6 +64,7 @@
         const X = (props) => <IconBase {...props}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></IconBase>;
         const RefreshCw = (props) => <IconBase {...props}><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></IconBase>;
         const Volume2 = (props) => <IconBase {...props}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></IconBase>;
+        const XCircle = (props) => <IconBase {...props}><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></IconBase>;
 
         // --- COMPONENTE DE NOTIFICAÇÃO (TOAST) ---
         const Toast = ({ id, message, type, onClose }) => {
@@ -179,7 +180,8 @@
                         'Pragma': 'no-cache',
                         'Expires': '0'
                     };
-                    const res = await fetch(`${API_URL}?t=${Date.now()}`, { headers });
+                    // Adiciona timestamp para evitar cache do navegador/servidor
+                    const res = await fetch(`${API_URL}?_t=${Date.now()}`, { headers });
                     if (res.ok) {
                         let data = await res.json();
                         if (!Array.isArray(data)) data = [];
@@ -259,7 +261,7 @@
                 try {
                     // Busca dados frescos com bypass de cache
                     const headers = { 'Cache-Control': 'no-cache' };
-                    const res = await fetch(`${API_URL}?t=${Date.now()}`, { headers });
+                    const res = await fetch(`${API_URL}?_t=${Date.now()}`, { headers });
                     const rawData = await res.json();
                     const currentData = Array.isArray(rawData) ? rawData : [];
                     
@@ -290,7 +292,7 @@
 
                 try {
                     const headers = { 'Cache-Control': 'no-cache' };
-                    const res = await fetch(`${API_URL}?t=${Date.now()}`, { headers });
+                    const res = await fetch(`${API_URL}?_t=${Date.now()}`, { headers });
                     const rawData = await res.json();
                     const currentData = Array.isArray(rawData) ? rawData : [];
 
@@ -318,11 +320,41 @@
                 }
             };
 
+            // NOVA FUNÇÃO: CANCELAR LOTE
+            const handleCancel = async (batch) => {
+                if (!window.confirm(`Deseja realmente CANCELAR o lote ${batch.code}?`)) return;
+
+                try {
+                    const headers = { 'Cache-Control': 'no-cache' };
+                    const res = await fetch(`${API_URL}?_t=${Date.now()}`, { headers });
+                    const rawData = await res.json();
+                    const currentData = Array.isArray(rawData) ? rawData : [];
+
+                    const updatedList = currentData.map(item => {
+                        if (item.id === batch.id) {
+                            return {
+                                ...item,
+                                status: 'cancelled',
+                                dispatchedAt: new Date().toISOString() // Data do cancelamento
+                            };
+                        }
+                        return item;
+                    });
+
+                    const success = await syncData(updatedList);
+                    if (success) {
+                        addToast("Lote cancelado!", "info");
+                    }
+                } catch (error) {
+                    addToast("Erro ao cancelar.", "error");
+                }
+            };
+
             const handleDelete = async (id) => {
-                if (window.confirm("Excluir este registro?")) {
+                if (window.confirm("Excluir este registro permanentemente?")) {
                     try {
                         const headers = { 'Cache-Control': 'no-cache' };
-                        const res = await fetch(`${API_URL}?t=${Date.now()}`, { headers });
+                        const res = await fetch(`${API_URL}?_t=${Date.now()}`, { headers });
                         const rawData = await res.json();
                         const currentData = Array.isArray(rawData) ? rawData : [];
                         
@@ -338,10 +370,15 @@
             const handleExport = () => {
                 let csv = "data:text/csv;charset=utf-8,ID;TIPO;STATUS;CRIADO EM;EXPEDIDO EM;RESPONSAVEL\n";
                 filteredBatches.forEach(b => {
+                    const statusMap = {
+                        'pending': 'PENDENTE',
+                        'dispatched': 'EXPEDIDO',
+                        'cancelled': 'CANCELADO'
+                    };
                     const line = [
                         safeRender(b.code),
                         safeRender(b.type),
-                        b.status === 'pending' ? 'PENDENTE' : 'EXPEDIDO',
+                        statusMap[b.status] || 'DESCONHECIDO',
                         formatDate(b.createdAt),
                         formatDate(b.dispatchedAt),
                         safeRender(b.dispatchedBy) || '-'
@@ -431,6 +468,7 @@
                             <div className="flex bg-white p-1 rounded-lg shadow-sm border border-slate-200">
                                 <button onClick={() => setFilterStatus('pending')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filterStatus === 'pending' ? 'bg-red-100 text-red-700' : 'text-slate-500 hover:bg-slate-50'}`}>Pendentes</button>
                                 <button onClick={() => setFilterStatus('dispatched')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filterStatus === 'dispatched' ? 'bg-green-100 text-green-700' : 'text-slate-500 hover:bg-slate-50'}`}>Expedidos</button>
+                                <button onClick={() => setFilterStatus('cancelled')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filterStatus === 'cancelled' ? 'bg-gray-100 text-gray-700' : 'text-slate-500 hover:bg-slate-50'}`}>Cancelados</button>
                                 <button onClick={() => setFilterStatus('all')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filterStatus === 'all' ? 'bg-blue-100 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}>Todos</button>
                             </div>
                             <div className="flex gap-2">
@@ -453,10 +491,12 @@
                             filteredBatches.map(batch => {
                                 const isCritical = criticalBatches.find(c => c.id === batch.id);
                                 return (
-                                    <div key={batch.id} className={`relative bg-white p-4 rounded-xl shadow-sm border-l-4 transition-all hover:shadow-md flex flex-col md:flex-row items-center gap-4 print-shadow-none print-border ${batch.status === 'pending' ? (isCritical ? 'border-l-red-800 bg-red-50' : 'border-l-red-500') : 'border-l-green-500 opacity-90'}`}>
+                                    <div key={batch.id} className={`relative bg-white p-4 rounded-xl shadow-sm border-l-4 transition-all hover:shadow-md flex flex-col md:flex-row items-center gap-4 print-shadow-none print-border 
+                                        ${batch.status === 'pending' ? (isCritical ? 'border-l-red-800 bg-red-50' : 'border-l-red-500') : 
+                                          batch.status === 'cancelled' ? 'border-l-gray-400 bg-gray-50 opacity-75' : 'border-l-green-500 opacity-90'}`}>
                                         <div className="flex-1 w-full">
                                             <div className="flex items-center flex-wrap gap-3 mb-2">
-                                                <span className="text-xl font-bold font-mono text-slate-800 tracking-wide">#{safeRender(batch.code)}</span>
+                                                <span className={`text-xl font-bold font-mono text-slate-800 tracking-wide ${batch.status === 'cancelled' ? 'line-through text-slate-500' : ''}`}>#{safeRender(batch.code)}</span>
                                                 <span className={`text-xs px-2 py-1 rounded font-bold border ${batch.type === 'LM' ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-indigo-100 text-indigo-700 border-indigo-200'}`}>{safeRender(batch.type)}</span>
                                                 {batch.status === 'pending' ? (
                                                     isCritical ? (
@@ -464,21 +504,33 @@
                                                     ) : (
                                                         <span className="bg-red-100 text-red-700 text-xs px-2 py-1 rounded-full font-bold uppercase print-hidden">Pendente</span>
                                                     )
+                                                ) : batch.status === 'cancelled' ? (
+                                                    <span className="flex items-center gap-1 bg-gray-600 text-white text-xs px-2 py-1 rounded-full font-bold uppercase print-hidden"><XCircle className="w-3 h-3" /> Cancelado</span>
                                                 ) : (
                                                     <span className="flex items-center gap-1 bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full font-bold uppercase print-hidden"><CheckCircle className="w-3 h-3" /> Expedido</span>
                                                 )}
                                             </div>
                                             <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-500">
                                                 <div className="flex items-center gap-1"><Clock className="w-3 h-3" /> <span className="font-semibold">Entrada:</span> {formatDate(batch.createdAt)}</div>
-                                                {batch.dispatchedAt && (<div className="flex items-center gap-1 text-green-700"><Truck className="w-3 h-3" /><span className="font-semibold">Saída:</span> {formatDate(batch.dispatchedAt)}</div>)}
+                                                {batch.dispatchedAt && (
+                                                    <div className={`flex items-center gap-1 ${batch.status === 'cancelled' ? 'text-gray-500' : 'text-green-700'}`}>
+                                                        <Truck className="w-3 h-3" />
+                                                        <span className="font-semibold">{batch.status === 'cancelled' ? 'Cancelado:' : 'Saída:'}</span> {formatDate(batch.dispatchedAt)}
+                                                    </div>
+                                                )}
                                                 {batch.dispatchedBy && (<div className="flex items-center gap-1 text-slate-700"><User className="w-3 h-3" /><span className="font-semibold">Resp:</span> {safeRender(batch.dispatchedBy)}</div>)}
                                             </div>
                                         </div>
                                         <div className="print-hidden flex items-center gap-2">
                                             {batch.status === 'pending' ? (
-                                                <button onClick={() => { setSelectedBatch(batch); setIsModalOpen(true); }} className={`px-6 py-2 rounded-lg font-bold text-white shadow-sm flex items-center gap-2 transition-transform active:scale-95 ${isCritical ? 'bg-red-700 hover:bg-red-800' : 'bg-green-600 hover:bg-green-700'}`}>
-                                                    <Truck className="w-4 h-4" /> {isCritical ? 'RESOLVER' : 'EXPEDIR'}
-                                                </button>
+                                                <>
+                                                    <button onClick={() => { setSelectedBatch(batch); setIsModalOpen(true); }} className={`px-6 py-2 rounded-lg font-bold text-white shadow-sm flex items-center gap-2 transition-transform active:scale-95 ${isCritical ? 'bg-red-700 hover:bg-red-800' : 'bg-green-600 hover:bg-green-700'}`}>
+                                                        <Truck className="w-4 h-4" /> {isCritical ? 'RESOLVER' : 'EXPEDIR'}
+                                                    </button>
+                                                    <button onClick={() => handleCancel(batch)} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors" title="Cancelar Lote">
+                                                        <XCircle className="w-6 h-6" />
+                                                    </button>
+                                                </>
                                             ) : (
                                                 <button onClick={() => handleDelete(batch.id)} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors" title="Excluir"><Trash2 className="w-5 h-5" /></button>
                                             )}
