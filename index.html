@@ -1,537 +1,646 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Plus, Truck, AlertTriangle, CheckCircle, Search, Trash2, 
-  Clock, Package, FileSpreadsheet, Printer, User, X, 
-  RefreshCw, Volume2
-} from 'lucide-react';
-
-// --- CONSTANTS ---
-const DEFAULT_DB_ID = 'f055f4783a2855129c04'; // ID fornecido pelo usuário
-
-// --- SOUND HELPER ---
-const playAlertSound = () => {
-  try {
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContext) return;
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logística Integrada</title>
     
-    const ctx = new AudioContext();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-
-    // Configuração do som (Bip de Alerta - A5 para A4)
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(880, ctx.currentTime);
-    osc.frequency.setValueAtTime(440, ctx.currentTime + 0.1);
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
     
-    gain.gain.setValueAtTime(0.1, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
-
-    osc.start();
-    osc.stop(ctx.currentTime + 0.5);
-  } catch (e) {
-    console.error("Audio play failed", e);
-  }
-};
-
-// --- TOAST COMPONENT ---
-const Toast = ({ message, type, onClose }) => {
-  useEffect(() => {
-    const timer = setTimeout(onClose, 3000);
-    return () => clearTimeout(timer);
-  }, [onClose]);
-
-  const bgColors = {
-    success: 'bg-green-600',
-    error: 'bg-red-600',
-    info: 'bg-blue-600'
-  };
-
-  return (
-    <div className={`${bgColors[type] || 'bg-slate-800'} text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-3 transition-all transform duration-300 opacity-100 translate-y-0 pointer-events-auto min-w-[300px]`}>
-      {type === 'success' && <CheckCircle className="w-5 h-5" />}
-      {type === 'error' && <AlertTriangle className="w-5 h-5" />}
-      <span className="font-medium">{message}</span>
-      <button onClick={onClose} className="ml-auto hover:opacity-75"><X className="w-4 h-4" /></button>
-    </div>
-  );
-};
-
-export default function App() {
-  // --- STATES ---
-  // Configuração do npoint.io
-  const [dbId] = useState(() => localStorage.getItem('logistica_npoint_id') || DEFAULT_DB_ID);
-  
-  const [batches, setBatches] = useState([]);
-  const [criticalBatches, setCriticalBatches] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [toasts, setToasts] = useState([]);
-
-  // Form States
-  const [newBatchId, setNewBatchId] = useState('');
-  const [batchType, setBatchType] = useState('LM');
-  
-  // Filter/Search States
-  const [filter, setFilter] = useState('pending');
-  const [searchTerm, setSearchTerm] = useState('');
-
-  // Confirmation Modal States
-  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
-  const [batchToDispatch, setBatchToDispatch] = useState(null);
-  const [dispatcherName, setDispatcherName] = useState('');
-
-  // --- NPOINT API FUNCTIONS ---
-  
-  const getApiUrl = () => `https://api.npoint.io/${dbId}`;
-
-  // 1. Ler dados (GET)
-  const fetchData = async () => {
-    if (!dbId) return;
-    try {
-      const response = await fetch(getApiUrl());
-      if (response.ok) {
-        const data = await response.json();
-        const loadedBatches = Array.isArray(data) ? data : [];
-        
-        // Ordenar: Mais recentes primeiro
-        loadedBatches.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        
-        setBatches(loadedBatches);
-
-        // --- VERIFICAÇÃO DE LOTES ATRASADOS (CRÍTICO) ---
-        const today = new Date();
-        today.setHours(0, 0, 0, 0); // Zera hora para comparar apenas a data
-
-        const late = loadedBatches.filter(b => {
-          if (b.status !== 'pending') return false;
-          const batchDate = new Date(b.createdAt);
-          // Se a data do lote for menor que hoje (00:00), é do dia anterior
-          return batchDate < today;
-        });
-
-        setCriticalBatches(late);
-      }
-    } catch (error) {
-      console.error("Erro ao buscar dados:", error);
-      // Não mostramos toast de erro no polling para não inundar a tela
-    }
-  };
-
-  // 2. Salvar dados (POST)
-  const saveData = async (newData) => {
-    if (!dbId) return;
-    setIsLoading(true);
-    try {
-      await fetch(getApiUrl(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newData)
-      });
-      setBatches(newData);
-      
-      // Recalcular críticos após salvar localmente (otimização visual)
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const late = newData.filter(b => {
-        if (b.status !== 'pending') return false;
-        const batchDate = new Date(b.createdAt);
-        return batchDate < today;
-      });
-      setCriticalBatches(late);
-      
-      return true;
-    } catch (error) {
-      console.error("Erro ao salvar:", error);
-      showToast("Erro de conexão ao salvar no npoint.", "error");
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // --- EFFECTS ---
-
-  // Polling: Busca dados a cada 3 segundos
-  useEffect(() => {
-    if (dbId) {
-      fetchData(); 
-      const interval = setInterval(fetchData, 3000);
-      return () => clearInterval(interval);
-    }
-  }, [dbId]);
-
-  // Audio Alert Effect
-  useEffect(() => {
-    if (criticalBatches.length > 0) {
-      const timer = setTimeout(() => playAlertSound(), 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [criticalBatches]);
-
-  // --- ACTIONS ---
-  const showToast = (message, type = 'info') => {
-    const id = Date.now();
-    setToasts(prev => [...prev, { id, message, type }]);
-  };
-
-  const removeToast = (id) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
-  };
-
-  const handleAddBatch = async (e) => {
-    e.preventDefault();
-    if (!newBatchId.trim() || !dbId) return;
-
-    // Buscar dados atuais para garantir que não sobrescrevemos
-    try {
-      const response = await fetch(getApiUrl());
-      const currentBatches = Array.isArray(await response.json()) ? await response.json() : [];
-
-      const newBatch = {
-        id: Date.now().toString(),
-        code: newBatchId.toUpperCase(),
-        type: batchType,
-        status: 'pending',
-        createdAt: new Date().toISOString(),
-        dispatchedAt: null,
-        dispatchedBy: null
-      };
-
-      const updatedBatches = [newBatch, ...currentBatches];
-      
-      const success = await saveData(updatedBatches);
-      if (success) {
-        setNewBatchId('');
-        showToast("Lote emitido com sucesso!", "success");
-      }
-    } catch (err) {
-      showToast("Erro ao sincronizar antes de salvar.", "error");
-    }
-  };
-
-  const handleConfirmDispatch = async (e) => {
-    e.preventDefault();
-    if (!batchToDispatch || !dispatcherName.trim()) return;
-
-    try {
-      // Fetch fresh data
-      const response = await fetch(getApiUrl());
-      const currentBatches = await response.json();
-
-      const updatedBatches = currentBatches.map(b => {
-        if (b.id === batchToDispatch.id) {
-          return {
-            ...b,
-            status: 'dispatched',
-            dispatchedAt: new Date().toISOString(),
-            dispatchedBy: dispatcherName.toUpperCase()
-          };
+    <!-- React e ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel para compilar JSX no navegador -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <style>
+        /* Ajustes específicos para impressão */
+        @media print {
+            @page { margin: 1.5cm; }
+            body { background: white; -webkit-print-color-adjust: exact; }
+            .print-hidden { display: none !important; }
+            .print-shadow-none { box-shadow: none !important; }
+            .print-border { border: 1px solid #ddd !important; }
+            .print-w-full { width: 100% !important; max-width: none !important; }
+            .print-pb-0 { padding-bottom: 0 !important; }
         }
-        return b;
-      });
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans">
+    <div id="root"></div>
 
-      const success = await saveData(updatedBatches);
-      if (success) {
-        showToast("Expedição confirmada!", "success");
-        setIsConfirmModalOpen(false);
-        setBatchToDispatch(null);
-        setDispatcherName('');
-      }
-    } catch (err) {
-      showToast("Erro ao atualizar o lote.", "error");
-    }
-  };
+    <script type="text/babel">
+        const { useState, useEffect } = React;
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Excluir este registro permanentemente?')) {
-      try {
-        const response = await fetch(getApiUrl());
-        const currentBatches = await response.json();
-        const updatedBatches = currentBatches.filter(b => b.id !== id);
-        
-        const success = await saveData(updatedBatches);
-        if (success) {
-          showToast("Registro excluído", "success");
-        }
-      } catch (err) {
-        showToast("Erro ao deletar.", "error");
-      }
-    }
-  };
+        // --- CONSTANTES DO SISTEMA ---
+        const DB_ID = 'f055f4783a2855129c04'; 
+        const API_URL = `https://api.npoint.io/${DB_ID}`;
 
-  // --- UI HELPERS ---
-  const exportToExcel = () => {
-    let csvContent = "data:text/csv;charset=utf-8,ID;TIPO;STATUS;CRIADO EM;EXPEDIDO EM;RESPONSAVEL\n";
-    filteredBatches.forEach(batch => {
-      const row = [
-        batch.code,
-        batch.type,
-        batch.status === 'pending' ? 'PENDENTE' : 'EXPEDIDO',
-        new Date(batch.createdAt).toLocaleString('pt-BR'),
-        batch.dispatchedAt ? new Date(batch.dispatchedAt).toLocaleString('pt-BR') : '-',
-        batch.dispatchedBy || '-'
-      ].join(";");
-      csvContent += row + "\n";
-    });
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `relatorio_logistica_${new Date().toISOString().slice(0,10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+        // --- COMPONENTES DE ÍCONES (SVG NATIVO PARA EVITAR ERROS DE IMPORTAÇÃO) ---
+        const IconBase = ({ children, ...props }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>{children}</svg>
+        );
 
-  const handlePrint = () => window.print();
+        const Plus = (props) => <IconBase {...props}><path d="M5 12h14"/><path d="M12 5v14"/></IconBase>;
+        const Truck = (props) => <IconBase {...props}><path d="M10 17h4"/><path d="M20 17h2v-2a1 1 0 0 0-1-1h-5"/><path d="M9 17h1"/><path d="M5 17h.01"/><path d="M2 17h2"/><path d="M15 17h1"/><path d="M22 17v-5l-2-2h-3"/><rect x="2" y="5" width="13" height="10" rx="2"/></IconBase>;
+        const AlertTriangle = (props) => <IconBase {...props}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></IconBase>;
+        const CheckCircle = (props) => <IconBase {...props}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></IconBase>;
+        const Search = (props) => <IconBase {...props}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></IconBase>;
+        const Trash2 = (props) => <IconBase {...props}><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></IconBase>;
+        const Clock = (props) => <IconBase {...props}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></IconBase>;
+        const Package = (props) => <IconBase {...props}><path d="m16.5 9.4-9-5.19"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></IconBase>;
+        const FileSpreadsheet = (props) => <IconBase {...props}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h2"/><path d="M8 17h2"/><path d="M14 13h2"/><path d="M14 17h2"/></IconBase>;
+        const Printer = (props) => <IconBase {...props}><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></IconBase>;
+        const User = (props) => <IconBase {...props}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></IconBase>;
+        const X = (props) => <IconBase {...props}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></IconBase>;
+        const RefreshCw = (props) => <IconBase {...props}><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></IconBase>;
+        const Volume2 = (props) => <IconBase {...props}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></IconBase>;
 
-  const filteredBatches = batches.filter(batch => {
-    const matchesSearch = batch.code?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesFilter = filter === 'all' ? true : batch.status === filter;
-    return matchesFilter && matchesSearch;
-  });
+        // --- COMPONENTE DE NOTIFICAÇÃO (TOAST) ---
+        const Toast = ({ id, message, type, onClose }) => {
+            useEffect(() => {
+                const timer = setTimeout(() => onClose(id), 3000);
+                return () => clearTimeout(timer);
+            }, [id, onClose]);
 
-  const pendingCount = batches.filter(b => b.status === 'pending').length;
+            const styles = {
+                success: 'bg-green-600',
+                error: 'bg-red-600',
+                info: 'bg-blue-600'
+            };
 
-  const formatDate = (isoString) => {
-    if (!isoString) return '-';
-    return new Date(isoString).toLocaleString('pt-BR', {
-      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
-    });
-  };
+            // Seleção de ícone
+            let IconComponent = User;
+            if (type === 'success') IconComponent = CheckCircle;
+            if (type === 'error') IconComponent = AlertTriangle;
 
-  return (
-    <div className="min-h-screen bg-slate-100 font-sans text-slate-800 print:bg-white pb-20">
-      
-      {/* TOASTS (Z-INDEX MÁXIMO) */}
-      <div className="fixed top-4 right-4 z-[110] flex flex-col gap-2 print:hidden">
-        {toasts.map(toast => (
-          <Toast 
-            key={toast.id} 
-            message={toast.message} 
-            type={toast.type} 
-            onClose={() => removeToast(toast.id)} 
-          />
-        ))}
-      </div>
-
-      {/* CONTAINER FIXO DE TOPO (BANNER + HEADER) */}
-      {/* z-30 para ficar acima do conteúdo, mas abaixo dos modais */}
-      <div className="sticky top-0 z-30 w-full print:static bg-slate-100">
-        
-        {/* CRITICAL ALERT BANNER */}
-        {criticalBatches.length > 0 && (
-          <div className="bg-red-600 text-white px-4 py-3 shadow-md print:hidden flex justify-center items-center gap-3">
-            {/* O pulso agora é só no ícone para não causar transparência no fundo */}
-            <Volume2 className="w-6 h-6 animate-pulse" />
-            <div className="font-bold text-center">
-              ATENÇÃO: Existem {criticalBatches.length} lote(s) do dia anterior ainda pendentes!
-              <span className="block text-xs font-normal opacity-90">Verifique os itens marcados em vermelho escuro abaixo.</span>
-            </div>
-            <button 
-              onClick={playAlertSound}
-              className="ml-4 bg-red-800 hover:bg-red-900 px-3 py-1 rounded text-xs font-bold transition-colors border border-red-400"
-            >
-              TESTAR SOM
-            </button>
-          </div>
-        )}
-
-        {/* HEADER */}
-        <header className="bg-blue-900 text-white p-4 shadow-lg print:hidden">
-          <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Truck className="w-8 h-8 text-yellow-400" />
-              <div>
-                <h1 className="text-xl font-bold">Logística Integrada</h1>
-                <p className="text-xs text-blue-200 flex items-center gap-1">
-                  {isLoading ? 'Sincronizando...' : 'Online (npoint)'}
-                  <span className={`w-2 h-2 rounded-full ${isLoading ? 'bg-yellow-400 animate-pulse' : 'bg-green-400'}`}></span>
-                </p>
-              </div>
-            </div>
-            
-            <div className="flex items-center gap-4">
-              <div className={`flex items-center gap-3 px-6 py-2 rounded-lg transition-colors duration-300 ${pendingCount > 0 ? 'bg-red-600' : 'bg-green-600'}`}>
-                <span className="text-2xl font-bold leading-none">{pendingCount}</span>
-                <span className="text-xs uppercase font-semibold">Pendentes</span>
-              </div>
-            </div>
-          </div>
-        </header>
-      </div>
-
-      <main className="max-w-6xl mx-auto p-4 print:p-0 print:max-w-none">
-        
-        {/* EMISSION FORM */}
-        <div className="bg-white p-6 rounded-xl shadow-md mb-6 border-l-8 border-blue-600 print:hidden">
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Package className="w-5 h-5 text-blue-600" />
-            1. Emissão do Lote
-          </h2>
-          <form onSubmit={handleAddBatch} className="flex flex-col md:flex-row gap-4 items-end">
-            <div className="flex-1 w-full">
-              <label className="block text-sm font-bold text-slate-600 mb-1">Número do Lote/NF</label>
-              <input
-                type="text"
-                value={newBatchId}
-                onChange={(e) => setNewBatchId(e.target.value)}
-                placeholder="Ex: 12345ABC"
-                className="w-full p-3 border-2 border-slate-300 rounded-lg focus:border-blue-500 focus:outline-none text-lg uppercase font-mono"
-              />
-            </div>
-            <div className="w-full md:w-48">
-              <label className="block text-sm font-bold text-slate-600 mb-1">Tipo</label>
-              <div className="flex bg-slate-100 p-1 rounded-lg border-2 border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setBatchType('LM')}
-                  className={`flex-1 py-2 text-sm font-bold rounded-md transition-colors ${batchType === 'LM' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-200'}`}
-                >
-                  LM
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBatchType('BRE')}
-                  className={`flex-1 py-2 text-sm font-bold rounded-md transition-colors ${batchType === 'BRE' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-200'}`}
-                >
-                  BRE
-                </button>
-              </div>
-            </div>
-            <button 
-              type="submit"
-              disabled={isLoading || !newBatchId.trim()}
-              className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold py-3.5 px-8 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-blue-200 shadow-lg active:scale-95 duration-100"
-            >
-              {isLoading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
-              Emitir
-            </button>
-          </form>
-        </div>
-
-        {/* TOOLS */}
-        <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4 print:hidden">
-          <div className="flex bg-white p-1 rounded-lg shadow-sm border border-slate-200">
-             <button onClick={() => setFilter('pending')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${filter === 'pending' ? 'bg-red-100 text-red-700 shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}>Pendentes</button>
-             <button onClick={() => setFilter('dispatched')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${filter === 'dispatched' ? 'bg-green-100 text-green-700 shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}>Expedidos</button>
-             <button onClick={() => setFilter('all')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${filter === 'all' ? 'bg-blue-100 text-blue-700 shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}>Todos</button>
-          </div>
-
-          <div className="flex gap-2">
-            <button onClick={exportToExcel} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-green-700 transition-colors shadow-sm">
-              <FileSpreadsheet className="w-4 h-4" /> Excel
-            </button>
-            <button onClick={handlePrint} className="flex items-center gap-2 bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-slate-700 transition-colors shadow-sm">
-              <Printer className="w-4 h-4" /> PDF
-            </button>
-          </div>
-          
-          <div className="relative w-full md:w-auto group">
-             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
-             <input type="text" placeholder="Buscar lote..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9 pr-4 py-2 rounded-lg border border-slate-300 w-full focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all" />
-          </div>
-        </div>
-
-        {/* BATCH LIST */}
-        <div className="space-y-3">
-          {filteredBatches.length === 0 ? (
-            <div className="text-center py-16 text-slate-400 border-2 border-dashed border-slate-300 rounded-xl bg-slate-50">
-              <Package className="w-12 h-12 mx-auto mb-2 text-slate-300" />
-              <p>Nenhum registro encontrado.</p>
-            </div>
-          ) : (
-            filteredBatches.map(batch => {
-              const isCritical = criticalBatches.find(cb => cb.id === batch.id);
-
-              return (
-                <div key={batch.id} className={`bg-white p-4 rounded-xl shadow-sm border-l-4 flex flex-col md:flex-row items-center justify-between gap-4 print:border border-slate-200 print:shadow-none transition-all hover:shadow-md ${
-                  batch.status === 'pending' 
-                    ? (isCritical ? 'border-l-red-800 bg-red-50 ring-2 ring-red-200' : 'border-l-red-500') 
-                    : 'border-l-green-500 opacity-90'
-                }`}>
-                  <div className="flex-1 w-full">
-                    <div className="flex items-center gap-3 mb-2">
-                      <span className="text-xl font-bold font-mono text-slate-700 tracking-wider">#{batch.code}</span>
-                      <span className={`text-xs px-2 py-1 rounded font-bold border ${batch.type === 'LM' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>{batch.type}</span>
-                      
-                      {batch.status === 'pending' ? (
-                        isCritical ? (
-                          <span className="bg-red-800 text-white text-xs px-2 py-1 rounded-full font-bold uppercase print:hidden animate-bounce flex items-center gap-1">
-                            <AlertTriangle className="w-3 h-3" /> ATRASADO
-                          </span>
-                        ) : (
-                          <span className="bg-red-100 text-red-700 text-xs px-2 py-1 rounded-full font-bold uppercase print:hidden animate-pulse">Pendente</span>
-                        )
-                      ) : (
-                        <span className="bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full font-bold uppercase print:hidden flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Expedido</span>
-                      )}
-                    </div>
-                    
-                    <div className="text-sm text-slate-500 flex flex-wrap gap-x-6 gap-y-1">
-                      <span className={`flex items-center gap-1 ${isCritical ? 'text-red-700 font-bold' : ''}`}>
-                        <Clock className="w-3 h-3" /> Emissão: {formatDate(batch.createdAt)}
-                      </span>
-                      {batch.dispatchedAt && <span className="flex items-center gap-1 text-green-600 font-bold"><Truck className="w-3 h-3" /> Saída: {formatDate(batch.dispatchedAt)}</span>}
-                      {batch.dispatchedBy && <span className="flex items-center gap-1 text-slate-600 font-bold"><User className="w-3 h-3" /> Resp: {batch.dispatchedBy}</span>}
-                    </div>
-                  </div>
-
-                  <div className="print:hidden">
-                    {batch.status === 'pending' ? (
-                      <button 
-                        onClick={() => { setBatchToDispatch(batch); setDispatcherName(''); setIsConfirmModalOpen(true); }} 
-                        className={`${isCritical ? 'bg-red-700 hover:bg-red-800 shadow-red-300' : 'bg-green-600 hover:bg-green-700 shadow-green-200'} text-white font-bold py-2 px-6 rounded-lg flex items-center gap-2 transition-colors shadow-md active:scale-95`}
-                      >
-                        <Truck className="w-5 h-5" /> {isCritical ? 'RESOLVER AGORA' : 'EXPEDIR'}
-                      </button>
-                    ) : (
-                      <button 
-                        onClick={() => handleDelete(batch.id)} 
-                        className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors" 
-                        title="Excluir Registro"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
-                    )}
-                  </div>
+            return (
+                <div className={`flex items-center gap-3 px-6 py-4 rounded-lg shadow-xl text-white min-w-[300px] transition-opacity duration-300 ${styles[type] || styles.info}`}>
+                    <IconComponent className="w-5 h-5" />
+                    <span className="font-medium text-sm">{message}</span>
+                    <button onClick={() => onClose(id)} className="ml-auto hover:opacity-80"><X className="w-4 h-4" /></button>
                 </div>
-              );
-            })
-          )}
-        </div>
-      </main>
+            );
+        };
 
-      {/* CONFIRMATION MODAL (Z-INDEX ALTO) */}
-      {isConfirmModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 backdrop-blur-sm print:hidden">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 transition-all scale-100 opacity-100 duration-200">
-            <h3 className="text-xl font-bold text-slate-800 mb-4 flex gap-2 items-center border-b pb-2"><Truck className="text-green-600"/> Confirmar Expedição</h3>
+        // --- APLICAÇÃO PRINCIPAL ---
+        function App() {
+            // --- ESTADOS ---
+            const [batches, setBatches] = useState([]);
+            const [criticalBatches, setCriticalBatches] = useState([]);
+            const [isLoading, setIsLoading] = useState(false);
+            const [toasts, setToasts] = useState([]);
             
-            <div className="bg-slate-50 p-3 rounded-lg mb-4 border border-slate-200">
-               <p className="text-xs text-slate-500 uppercase font-bold">Lote Selecionado</p>
-               <p className="text-2xl font-mono font-bold text-slate-800">#{batchToDispatch?.code}</p>
-            </div>
+            // Estados de Formulário
+            const [newBatchId, setNewBatchId] = useState('');
+            const [batchType, setBatchType] = useState('LM');
 
-            <form onSubmit={handleConfirmDispatch}>
-              <label className="block text-sm font-bold mb-2 text-slate-700">Quem está liberando? <span className="text-red-500">*</span></label>
-              <input 
-                autoFocus 
-                required 
-                value={dispatcherName} 
-                onChange={(e) => setDispatcherName(e.target.value)} 
-                placeholder="DIGITE SEU NOME" 
-                className="w-full p-4 border-2 border-slate-300 rounded-lg mb-6 uppercase focus:border-green-500 outline-none font-bold text-center" 
-              />
-              <div className="flex gap-3">
-                <button type="button" onClick={() => setIsConfirmModalOpen(false)} className="flex-1 py-3 bg-slate-100 font-bold rounded-lg text-slate-600 hover:bg-slate-200 transition-colors">Cancelar</button>
-                <button type="submit" disabled={!dispatcherName.trim()} className="flex-1 py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors shadow-lg shadow-green-200 disabled:opacity-50 disabled:cursor-not-allowed">CONFIRMAR</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+            // Estados de Filtro e Busca
+            const [filterStatus, setFilterStatus] = useState('pending'); // pending, dispatched, all
+            const [searchTerm, setSearchTerm] = useState('');
+
+            // Estados de Modal
+            const [isModalOpen, setIsModalOpen] = useState(false);
+            const [selectedBatch, setSelectedBatch] = useState(null);
+            const [dispatcherName, setDispatcherName] = useState('');
+
+            // --- FUNÇÕES AUXILIARES ---
+
+            // Gerenciador de Áudio
+            const playSound = () => {
+                try {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    if (!AudioContext) return;
+                    
+                    const ctx = new AudioContext();
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(880, ctx.currentTime);     // A5
+                    osc.frequency.setValueAtTime(440, ctx.currentTime + 0.1); // A4
+                    
+                    gain.gain.setValueAtTime(0.05, ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.5);
+                } catch (e) {
+                    console.warn("Áudio bloqueado pelo navegador ou erro:", e);
+                }
+            };
+
+            // Gerenciador de Toasts
+            const addToast = (message, type = 'info') => {
+                setToasts(prev => [...prev, { id: Date.now(), message, type }]);
+            };
+
+            const removeToast = (id) => {
+                setToasts(prev => prev.filter(t => t.id !== id));
+            };
+
+            // Formatador de Data
+            const formatDate = (isoString) => {
+                if (!isoString) return '--/--/---- --:--';
+                return new Date(isoString).toLocaleString('pt-BR', {
+                    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+                });
+            };
+
+            // --- API (CRUD) ---
+
+            const fetchData = async (silent = false) => {
+                if (!silent) setIsLoading(true);
+                try {
+                    const res = await fetch(API_URL);
+                    if (res.ok) {
+                        let data = await res.json();
+                        if (!Array.isArray(data)) data = [];
+                        
+                        // Ordenação: Pendentes críticos > Pendentes recentes > Expedidos recentes
+                        data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+                        
+                        setBatches(data);
+                        checkCriticalBatches(data);
+                    }
+                } catch (error) {
+                    console.error("Erro ao buscar dados:", error);
+                    if (!silent) addToast("Falha ao conectar com o servidor.", "error");
+                } finally {
+                    if (!silent) setIsLoading(false);
+                }
+            };
+
+            const syncData = async (newData) => {
+                setIsLoading(true);
+                try {
+                    await fetch(API_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(newData)
+                    });
+                    setBatches(newData);
+                    checkCriticalBatches(newData);
+                    return true;
+                } catch (error) {
+                    console.error("Erro ao salvar:", error);
+                    addToast("Erro ao salvar alterações.", "error");
+                    return false;
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            // --- LÓGICA DE NEGÓCIO ---
+
+            const checkCriticalBatches = (data) => {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+
+                const critical = data.filter(item => {
+                    if (item.status !== 'pending') return false;
+                    const createdDate = new Date(item.createdAt);
+                    return createdDate < today; // Criado antes de hoje (ontem ou antes)
+                });
+
+                setCriticalBatches(critical);
+            };
+
+            // Polling e Alerta Sonoro
+            useEffect(() => {
+                fetchData(true); // Carga inicial
+                const interval = setInterval(() => fetchData(true), 5000); // Atualiza a cada 5s
+                return () => clearInterval(interval);
+            }, []);
+
+            useEffect(() => {
+                if (criticalBatches.length > 0) {
+                    // Tenta tocar som a cada 10 segundos se houver pendências críticas
+                    const soundInterval = setInterval(playSound, 10000);
+                    return () => clearInterval(soundInterval);
+                }
+            }, [criticalBatches.length]);
+
+
+            // Handlers
+            const handleAddBatch = async (e) => {
+                e.preventDefault();
+                if (!newBatchId.trim()) return;
+
+                // Busca versão mais recente antes de adicionar para evitar sobrescrita
+                try {
+                    const res = await fetch(API_URL);
+                    const currentData = Array.isArray(await res.json()) ? await res.json() : [];
+                    
+                    const newBatch = {
+                        id: Date.now().toString(),
+                        code: newBatchId.toUpperCase(),
+                        type: batchType,
+                        status: 'pending',
+                        createdAt: new Date().toISOString(),
+                        dispatchedAt: null,
+                        dispatchedBy: null
+                    };
+
+                    const updatedList = [newBatch, ...currentData]; // Adiciona no topo
+                    
+                    const success = await syncData(updatedList);
+                    if (success) {
+                        setNewBatchId('');
+                        addToast("Lote emitido com sucesso!", "success");
+                    }
+                } catch (error) {
+                    addToast("Erro de sincronização. Tente novamente.", "error");
+                }
+            };
+
+            const handleDispatch = async (e) => {
+                e.preventDefault();
+                if (!selectedBatch || !dispatcherName.trim()) return;
+
+                try {
+                    // Busca dados frescos
+                    const res = await fetch(API_URL);
+                    const currentData = await res.json();
+
+                    const updatedList = currentData.map(item => {
+                        if (item.id === selectedBatch.id) {
+                            return {
+                                ...item,
+                                status: 'dispatched',
+                                dispatchedAt: new Date().toISOString(),
+                                dispatchedBy: dispatcherName.toUpperCase()
+                            };
+                        }
+                        return item;
+                    });
+
+                    const success = await syncData(updatedList);
+                    if (success) {
+                        addToast("Lote expedido com sucesso!", "success");
+                        setIsModalOpen(false);
+                        setDispatcherName('');
+                        setSelectedBatch(null);
+                    }
+                } catch (error) {
+                    addToast("Erro ao processar expedição.", "error");
+                }
+            };
+
+            const handleDelete = async (id) => {
+                if (window.confirm("Tem certeza que deseja excluir este registro?")) {
+                    try {
+                        const res = await fetch(API_URL);
+                        const currentData = await res.json();
+                        const updatedList = currentData.filter(item => item.id !== id);
+                        
+                        const success = await syncData(updatedList);
+                        if (success) addToast("Registro removido.", "info");
+                    } catch (error) {
+                        addToast("Erro ao excluir.", "error");
+                    }
+                }
+            };
+
+            const handleExport = () => {
+                let csv = "data:text/csv;charset=utf-8,ID;TIPO;STATUS;CRIADO EM;EXPEDIDO EM;RESPONSAVEL\n";
+                filteredBatches.forEach(b => {
+                    const line = [
+                        b.code,
+                        b.type,
+                        b.status === 'pending' ? 'PENDENTE' : 'EXPEDIDO',
+                        formatDate(b.createdAt),
+                        formatDate(b.dispatchedAt),
+                        b.dispatchedBy || '-'
+                    ].join(";");
+                    csv += line + "\n";
+                });
+                
+                const encodedUri = encodeURI(csv);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", `logistica_${new Date().toLocaleDateString()}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+
+            // --- FILTRAGEM ---
+            const filteredBatches = batches.filter(batch => {
+                const matchesSearch = batch.code?.toLowerCase().includes(searchTerm.toLowerCase());
+                const matchesFilter = filterStatus === 'all' ? true : batch.status === filterStatus;
+                return matchesSearch && matchesFilter;
+            });
+
+            const pendingCount = batches.filter(b => b.status === 'pending').length;
+
+            return (
+                <div className="pb-20 print-pb-0">
+                
+                    {/* --- TOAST CONTAINER --- */}
+                    <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 print-hidden pointer-events-none">
+                        <div className="pointer-events-auto flex flex-col gap-2">
+                        {toasts.map(t => (
+                            <Toast key={t.id} id={t.id} message={t.message} type={t.type} onClose={removeToast} />
+                        ))}
+                        </div>
+                    </div>
+
+                    {/* --- ALERTA CRÍTICO (STICKY) --- */}
+                    {criticalBatches.length > 0 && (
+                        <div className="sticky top-0 z-50 bg-red-600 text-white p-3 shadow-md flex justify-center items-center gap-3 animate-pulse print-hidden">
+                        <Volume2 className="w-6 h-6 animate-bounce" />
+                        <div className="text-center font-bold">
+                            ATENÇÃO: Existem {criticalBatches.length} lote(s) do dia anterior pendentes!
+                        </div>
+                        <button onClick={playSound} className="ml-2 bg-red-800 px-3 py-1 rounded text-xs hover:bg-red-900 border border-red-400">
+                            Testar Som
+                        </button>
+                        </div>
+                    )}
+
+                    {/* --- CABEÇALHO --- */}
+                    <header className="bg-blue-900 text-white p-4 shadow-lg print-hidden">
+                        <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+                        
+                        <div className="flex items-center gap-3">
+                            <div className="bg-yellow-400 p-2 rounded-lg text-blue-900">
+                            <Truck className="w-6 h-6" />
+                            </div>
+                            <div>
+                            <h1 className="text-2xl font-bold leading-none">Logística Integrada</h1>
+                            <div className="flex items-center gap-2 mt-1">
+                                <span className={`w-2 h-2 rounded-full ${isLoading ? 'bg-yellow-400 animate-pulse' : 'bg-green-400'}`}></span>
+                                <span className="text-xs text-blue-200 uppercase tracking-wider">
+                                {isLoading ? 'Sincronizando...' : 'Sistema Online'}
+                                </span>
+                            </div>
+                            </div>
+                        </div>
+
+                        <div className={`px-6 py-2 rounded-lg flex items-center gap-3 ${pendingCount > 0 ? 'bg-red-600 shadow-lg shadow-red-900/20' : 'bg-green-600 shadow-lg shadow-green-900/20'}`}>
+                            <span className="text-3xl font-bold">{pendingCount}</span>
+                            <div className="flex flex-col text-xs font-semibold uppercase leading-tight">
+                            <span>Lotes</span>
+                            <span>Pendentes</span>
+                            </div>
+                        </div>
+
+                        </div>
+                    </header>
+
+                    {/* --- CONTEÚDO PRINCIPAL --- */}
+                    <main className="max-w-6xl mx-auto p-4 print-w-full">
+                        
+                        {/* FORMULÁRIO DE EMISSÃO */}
+                        <div className="bg-white rounded-xl shadow-md p-6 mb-6 border-l-4 border-blue-600 print-hidden">
+                        <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
+                            <Package className="w-5 h-5 text-blue-600" /> Nova Emissão
+                        </h2>
+                        
+                        <form onSubmit={handleAddBatch} className="flex flex-col md:flex-row gap-4 items-end">
+                            <div className="flex-1 w-full">
+                            <label className="block text-sm font-semibold text-slate-500 mb-1">Número do Lote / NF</label>
+                            <input 
+                                autoFocus
+                                value={newBatchId}
+                                onChange={e => setNewBatchId(e.target.value)}
+                                placeholder="Ex: 12345ABC"
+                                className="w-full p-3 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-lg uppercase"
+                            />
+                            </div>
+
+                            <div className="w-full md:w-auto">
+                            <label className="block text-sm font-semibold text-slate-500 mb-1">Tipo de Carga</label>
+                            <div className="flex bg-slate-100 p-1 rounded-lg">
+                                <button
+                                type="button"
+                                onClick={() => setBatchType('LM')}
+                                className={`px-6 py-2 rounded-md font-bold text-sm transition-all ${batchType === 'LM' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-200'}`}
+                                >
+                                LM
+                                </button>
+                                <button
+                                type="button"
+                                onClick={() => setBatchType('BRE')}
+                                className={`px-6 py-2 rounded-md font-bold text-sm transition-all ${batchType === 'BRE' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-200'}`}
+                                >
+                                BRE
+                                </button>
+                            </div>
+                            </div>
+
+                            <button 
+                            type="submit" 
+                            disabled={!newBatchId.trim() || isLoading}
+                            className="w-full md:w-auto px-8 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-lg shadow-md transition-colors flex items-center justify-center gap-2"
+                            >
+                            {isLoading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
+                            EMITIR
+                            </button>
+                        </form>
+                        </div>
+
+                        {/* BARRA DE FERRAMENTAS */}
+                        <div className="flex flex-col md:flex-row justify-between items-center gap-4 mb-6 print-hidden">
+                        
+                        {/* Filtros */}
+                        <div className="flex bg-white p-1 rounded-lg shadow-sm border border-slate-200">
+                            <button onClick={() => setFilterStatus('pending')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filterStatus === 'pending' ? 'bg-red-100 text-red-700' : 'text-slate-500 hover:bg-slate-50'}`}>Pendentes</button>
+                            <button onClick={() => setFilterStatus('dispatched')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filterStatus === 'dispatched' ? 'bg-green-100 text-green-700' : 'text-slate-500 hover:bg-slate-50'}`}>Expedidos</button>
+                            <button onClick={() => setFilterStatus('all')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filterStatus === 'all' ? 'bg-blue-100 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}>Todos</button>
+                        </div>
+
+                        {/* Ações */}
+                        <div className="flex gap-2">
+                            <button onClick={handleExport} className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm shadow-sm transition-colors">
+                            <FileSpreadsheet className="w-4 h-4" /> Excel
+                            </button>
+                            <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg font-bold text-sm shadow-sm transition-colors">
+                            <Printer className="w-4 h-4" /> PDF
+                            </button>
+                        </div>
+
+                        {/* Busca */}
+                        <div className="relative w-full md:w-64">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                            <input 
+                            type="text" 
+                            placeholder="Buscar lote..." 
+                            value={searchTerm}
+                            onChange={e => setSearchTerm(e.target.value)}
+                            className="w-full pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500"
+                            />
+                        </div>
+                        </div>
+
+                        {/* LISTAGEM DE LOTES */}
+                        <div className="space-y-3">
+                        {filteredBatches.length === 0 ? (
+                            <div className="text-center py-20 bg-white rounded-xl border-2 border-dashed border-slate-200">
+                            <Package className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                            <p className="text-slate-400 font-medium">Nenhum registro encontrado para o filtro atual.</p>
+                            </div>
+                        ) : (
+                            filteredBatches.map(batch => {
+                            const isCritical = criticalBatches.find(c => c.id === batch.id);
+
+                            return (
+                                <div 
+                                key={batch.id} 
+                                className={`relative bg-white p-4 rounded-xl shadow-sm border-l-4 transition-all hover:shadow-md flex flex-col md:flex-row items-center gap-4 print-shadow-none print-border ${
+                                    batch.status === 'pending' 
+                                    ? (isCritical ? 'border-l-red-800 bg-red-50' : 'border-l-red-500') 
+                                    : 'border-l-green-500 opacity-90'
+                                }`}
+                                >
+                                {/* Informações Principais */}
+                                <div className="flex-1 w-full">
+                                    <div className="flex items-center flex-wrap gap-3 mb-2">
+                                    <span className="text-xl font-bold font-mono text-slate-800 tracking-wide">
+                                        #{batch.code}
+                                    </span>
+                                    
+                                    <span className={`text-xs px-2 py-1 rounded font-bold border ${batch.type === 'LM' ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-indigo-100 text-indigo-700 border-indigo-200'}`}>
+                                        {batch.type}
+                                    </span>
+
+                                    {batch.status === 'pending' ? (
+                                        isCritical ? (
+                                        <span className="flex items-center gap-1 bg-red-800 text-white text-xs px-2 py-1 rounded-full font-bold animate-pulse print-hidden">
+                                            <AlertTriangle className="w-3 h-3" /> ATRASADO
+                                        </span>
+                                        ) : (
+                                        <span className="bg-red-100 text-red-700 text-xs px-2 py-1 rounded-full font-bold uppercase print-hidden">
+                                            Pendente
+                                        </span>
+                                        )
+                                    ) : (
+                                        <span className="flex items-center gap-1 bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full font-bold uppercase print-hidden">
+                                        <CheckCircle className="w-3 h-3" /> Expedido
+                                        </span>
+                                    )}
+                                    </div>
+
+                                    <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-500">
+                                    <div className="flex items-center gap-1">
+                                        <Clock className="w-3 h-3" /> 
+                                        <span className="font-semibold">Entrada:</span> {formatDate(batch.createdAt)}
+                                    </div>
+                                    
+                                    {batch.dispatchedAt && (
+                                        <div className="flex items-center gap-1 text-green-700">
+                                        <Truck className="w-3 h-3" />
+                                        <span className="font-semibold">Saída:</span> {formatDate(batch.dispatchedAt)}
+                                        </div>
+                                    )}
+
+                                    {batch.dispatchedBy && (
+                                        <div className="flex items-center gap-1 text-slate-700">
+                                        <User className="w-3 h-3" />
+                                        <span className="font-semibold">Resp:</span> {batch.dispatchedBy}
+                                        </div>
+                                    )}
+                                    </div>
+                                </div>
+
+                                {/* Ações */}
+                                <div className="print-hidden flex items-center gap-2">
+                                    {batch.status === 'pending' ? (
+                                    <button 
+                                        onClick={() => {
+                                        setSelectedBatch(batch);
+                                        setIsModalOpen(true);
+                                        }}
+                                        className={`px-6 py-2 rounded-lg font-bold text-white shadow-sm flex items-center gap-2 transition-transform active:scale-95 ${isCritical ? 'bg-red-700 hover:bg-red-800' : 'bg-green-600 hover:bg-green-700'}`}
+                                    >
+                                        <Truck className="w-4 h-4" /> 
+                                        {isCritical ? 'RESOLVER' : 'EXPEDIR'}
+                                    </button>
+                                    ) : (
+                                    <button 
+                                        onClick={() => handleDelete(batch.id)}
+                                        className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                                        title="Excluir"
+                                    >
+                                        <Trash2 className="w-5 h-5" />
+                                    </button>
+                                    )
+                                    }
+                                </div>
+                                </div>
+                            );
+                            })
+                        )}
+                        </div>
+                    </main>
+
+                    {/* --- MODAL DE EXPEDIÇÃO --- */}
+                    {isModalOpen && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4 print-hidden transition-opacity duration-200">
+                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 transform transition-all scale-100">
+                            <div className="flex justify-between items-center mb-6 border-b pb-4">
+                            <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                                <Truck className="text-green-600 w-6 h-6" /> Confirmar Saída
+                            </h3>
+                            <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                                <X className="w-6 h-6" />
+                            </button>
+                            </div>
+
+                            <div className="bg-slate-50 p-4 rounded-lg mb-6 border border-slate-200 text-center">
+                            <span className="text-xs uppercase font-bold text-slate-400 tracking-wider">Lote Selecionado</span>
+                            <div className="text-3xl font-mono font-bold text-slate-800 mt-1">
+                                {selectedBatch?.code}
+                            </div>
+                            </div>
+
+                            <form onSubmit={handleDispatch}>
+                            <div className="mb-6">
+                                <label className="block text-sm font-bold text-slate-700 mb-2">
+                                Nome do Responsável <span className="text-red-500">*</span>
+                                </label>
+                                <input 
+                                autoFocus
+                                required
+                                value={dispatcherName}
+                                onChange={e => setDispatcherName(e.target.value)}
+                                placeholder="DIGITE SEU NOME"
+                                className="w-full p-4 border-2 border-slate-300 rounded-lg focus:border-green-500 focus:outline-none text-center font-bold uppercase text-lg"
+                                />
+                            </div>
+
+                            <div className="flex gap-3">
+                                <button 
+                                type="button" 
+                                onClick={() => setIsModalOpen(false)}
+                                className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200 transition-colors"
+                                >
+                                CANCELAR
+                                </button>
+                                <button 
+                                type="submit" 
+                                disabled={!dispatcherName.trim() || isLoading}
+                                className="flex-1 py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 shadow-lg shadow-green-200 transition-colors disabled:opacity-50"
+                                >
+                                CONFIRMAR
+                                </button>
+                            </div>
+                            </form>
+                        </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
