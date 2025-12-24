@@ -8,7 +8,7 @@
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React e ReactDOM -->
+    <!-- React e ReactDOM (Versões de Produção para estabilidade) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     
@@ -38,7 +38,8 @@
         const DB_ID = 'f055f4783a2855129c04'; 
         const API_URL = `https://api.npoint.io/${DB_ID}`;
 
-        // --- COMPONENTES DE ÍCONES (SVG NATIVO PARA EVITAR ERROS DE IMPORTAÇÃO) ---
+        // --- SISTEMA DE ÍCONES (Nativo SVG para corrigir Erro #130) ---
+        // Criamos os ícones como componentes React reais aqui mesmo
         const IconBase = ({ children, ...props }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>{children}</svg>
         );
@@ -71,7 +72,6 @@
                 info: 'bg-blue-600'
             };
 
-            // Seleção de ícone
             let IconComponent = User;
             if (type === 'success') IconComponent = CheckCircle;
             if (type === 'error') IconComponent = AlertTriangle;
@@ -83,6 +83,12 @@
                     <button onClick={() => onClose(id)} className="ml-auto hover:opacity-80"><X className="w-4 h-4" /></button>
                 </div>
             );
+        };
+
+        // --- HELPER SEGURO PARA RENDERIZAR VALORES ---
+        const safeRender = (val) => {
+            if (typeof val === 'object' && val !== null) return ''; // Previne o erro #130
+            return val;
         };
 
         // --- APLICAÇÃO PRINCIPAL ---
@@ -98,7 +104,7 @@
             const [batchType, setBatchType] = useState('LM');
 
             // Estados de Filtro e Busca
-            const [filterStatus, setFilterStatus] = useState('pending'); // pending, dispatched, all
+            const [filterStatus, setFilterStatus] = useState('pending'); 
             const [searchTerm, setSearchTerm] = useState('');
 
             // Estados de Modal
@@ -108,18 +114,13 @@
 
             // --- FUNÇÕES AUXILIARES ---
 
-            // Gerenciador de Áudio Melhorado
             const playSound = () => {
                 try {
                     const AudioContext = window.AudioContext || window.webkitAudioContext;
                     if (!AudioContext) return;
                     
                     const ctx = new AudioContext();
-                    
-                    // Tenta retomar se o navegador suspendeu (comum em autoplays)
-                    if (ctx.state === 'suspended') {
-                        ctx.resume();
-                    }
+                    if (ctx.state === 'suspended') ctx.resume();
 
                     const osc = ctx.createOscillator();
                     const gain = ctx.createGain();
@@ -128,27 +129,24 @@
                     gain.connect(ctx.destination);
 
                     const now = ctx.currentTime;
-                    
                     osc.type = 'square';
                     
-                    // Bip 1 (Mais agudo)
-                    osc.frequency.setValueAtTime(880, now); // A5
+                    // Bip duplo (Agudo -> Grave)
+                    osc.frequency.setValueAtTime(880, now);
                     gain.gain.setValueAtTime(0.1, now);
                     gain.gain.setValueAtTime(0.01, now + 0.1);
 
-                    // Bip 2 (Mais grave, logo em seguida)
-                    osc.frequency.setValueAtTime(440, now + 0.15); // A4
+                    osc.frequency.setValueAtTime(440, now + 0.15);
                     gain.gain.setValueAtTime(0.1, now + 0.15);
                     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
 
                     osc.start(now);
                     osc.stop(now + 0.6);
                 } catch (e) {
-                    console.warn("Áudio bloqueado pelo navegador ou erro:", e);
+                    console.warn("Áudio bloqueado pelo navegador", e);
                 }
             };
 
-            // Gerenciador de Toasts
             const addToast = (message, type = 'info') => {
                 setToasts(prev => [...prev, { id: Date.now(), message, type }]);
             };
@@ -157,15 +155,14 @@
                 setToasts(prev => prev.filter(t => t.id !== id));
             };
 
-            // Formatador de Data
             const formatDate = (isoString) => {
-                if (!isoString) return '--/--/---- --:--';
+                if (!isoString || typeof isoString !== 'string') return '--/--/---- --:--';
                 return new Date(isoString).toLocaleString('pt-BR', {
                     day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
                 });
             };
 
-            // --- API (CRUD) ---
+            // --- API ---
 
             const fetchData = async (silent = false) => {
                 if (!silent) setIsLoading(true);
@@ -174,16 +171,13 @@
                     if (res.ok) {
                         let data = await res.json();
                         if (!Array.isArray(data)) data = [];
-                        
-                        // Ordenação: Pendentes críticos > Pendentes recentes > Expedidos recentes
                         data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-                        
                         setBatches(data);
                         checkCriticalBatches(data);
                     }
                 } catch (error) {
-                    console.error("Erro ao buscar dados:", error);
-                    if (!silent) addToast("Falha ao conectar com o servidor.", "error");
+                    console.error("Erro busca:", error);
+                    if (!silent) addToast("Falha na conexão.", "error");
                 } finally {
                     if (!silent) setIsLoading(false);
                 }
@@ -201,8 +195,8 @@
                     checkCriticalBatches(newData);
                     return true;
                 } catch (error) {
-                    console.error("Erro ao salvar:", error);
-                    addToast("Erro ao salvar alterações.", "error");
+                    console.error("Erro salvamento:", error);
+                    addToast("Erro ao salvar.", "error");
                     return false;
                 } finally {
                     setIsLoading(false);
@@ -213,30 +207,24 @@
 
             const checkCriticalBatches = (data) => {
                 const today = new Date();
-                today.setHours(0, 0, 0, 0); // Zera hora para comparar apenas a data (meia-noite de hoje)
+                today.setHours(0, 0, 0, 0); 
 
                 const critical = data.filter(item => {
-                    // Ignora os já expedidos
                     if (item.status !== 'pending') return false;
-                    
                     if (!item.createdAt) return false;
                     const createdDate = new Date(item.createdAt);
-                    
-                    // Se a data de criação for menor que hoje (ou seja, ontem ou antes), é crítico
                     return createdDate < today; 
                 });
 
                 setCriticalBatches(critical);
             };
 
-            // Polling e Alerta Sonoro
             useEffect(() => {
-                fetchData(true); // Carga inicial
-                const interval = setInterval(() => fetchData(true), 5000); // Atualiza a cada 5s
+                fetchData(true);
+                const interval = setInterval(() => fetchData(true), 5000);
                 return () => clearInterval(interval);
             }, []);
 
-            // Efeito de Áudio (Toca a cada 10s se houver críticos)
             useEffect(() => {
                 if (criticalBatches.length > 0) {
                     const soundInterval = setInterval(playSound, 10000);
@@ -244,13 +232,12 @@
                 }
             }, [criticalBatches.length]);
 
+            // --- HANDLERS ---
 
-            // Handlers
             const handleAddBatch = async (e) => {
                 e.preventDefault();
                 if (!newBatchId.trim()) return;
 
-                // Busca versão mais recente antes de adicionar para evitar sobrescrita
                 try {
                     const res = await fetch(API_URL);
                     const currentData = Array.isArray(await res.json()) ? await res.json() : [];
@@ -265,15 +252,13 @@
                         dispatchedBy: null
                     };
 
-                    const updatedList = [newBatch, ...currentData]; // Adiciona no topo
-                    
-                    const success = await syncData(updatedList);
+                    const success = await syncData([newBatch, ...currentData]);
                     if (success) {
                         setNewBatchId('');
-                        addToast("Lote emitido com sucesso!", "success");
+                        addToast("Lote emitido!", "success");
                     }
                 } catch (error) {
-                    addToast("Erro de sincronização. Tente novamente.", "error");
+                    addToast("Erro ao sincronizar.", "error");
                 }
             };
 
@@ -282,7 +267,6 @@
                 if (!selectedBatch || !dispatcherName.trim()) return;
 
                 try {
-                    // Busca dados frescos
                     const res = await fetch(API_URL);
                     const currentData = await res.json();
 
@@ -300,25 +284,24 @@
 
                     const success = await syncData(updatedList);
                     if (success) {
-                        addToast("Lote expedido com sucesso!", "success");
+                        addToast("Lote expedido!", "success");
                         setIsModalOpen(false);
                         setDispatcherName('');
                         setSelectedBatch(null);
                     }
                 } catch (error) {
-                    addToast("Erro ao processar expedição.", "error");
+                    addToast("Erro ao expedir.", "error");
                 }
             };
 
             const handleDelete = async (id) => {
-                if (window.confirm("Tem certeza que deseja excluir este registro?")) {
+                if (window.confirm("Excluir este registro?")) {
                     try {
                         const res = await fetch(API_URL);
                         const currentData = await res.json();
                         const updatedList = currentData.filter(item => item.id !== id);
-                        
                         const success = await syncData(updatedList);
-                        if (success) addToast("Registro removido.", "info");
+                        if (success) addToast("Removido.", "info");
                     } catch (error) {
                         addToast("Erro ao excluir.", "error");
                     }
@@ -329,16 +312,15 @@
                 let csv = "data:text/csv;charset=utf-8,ID;TIPO;STATUS;CRIADO EM;EXPEDIDO EM;RESPONSAVEL\n";
                 filteredBatches.forEach(b => {
                     const line = [
-                        b.code,
-                        b.type,
+                        safeRender(b.code),
+                        safeRender(b.type),
                         b.status === 'pending' ? 'PENDENTE' : 'EXPEDIDO',
                         formatDate(b.createdAt),
                         formatDate(b.dispatchedAt),
-                        b.dispatchedBy || '-'
+                        safeRender(b.dispatchedBy) || '-'
                     ].join(";");
                     csv += line + "\n";
                 });
-                
                 const encodedUri = encodeURI(csv);
                 const link = document.createElement("a");
                 link.setAttribute("href", encodedUri);
@@ -348,7 +330,6 @@
                 document.body.removeChild(link);
             };
 
-            // --- FILTRAGEM ---
             const filteredBatches = batches.filter(batch => {
                 const matchesSearch = batch.code?.toLowerCase().includes(searchTerm.toLowerCase());
                 const matchesFilter = filterStatus === 'all' ? true : batch.status === filterStatus;
@@ -359,8 +340,6 @@
 
             return (
                 <div className="pb-20 print-pb-0">
-                
-                    {/* --- TOAST CONTAINER --- */}
                     <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 print-hidden pointer-events-none">
                         <div className="pointer-events-auto flex flex-col gap-2">
                         {toasts.map(t => (
@@ -369,290 +348,141 @@
                         </div>
                     </div>
 
-                    {/* --- ALERTA CRÍTICO (STICKY) --- */}
                     {criticalBatches.length > 0 && (
                         <div className="sticky top-0 z-50 bg-red-600 text-white p-3 shadow-md flex justify-center items-center gap-3 animate-pulse print-hidden">
                         <Volume2 className="w-6 h-6 animate-bounce" />
                         <div className="text-center font-bold">
                             ATENÇÃO: Existem {criticalBatches.length} lote(s) do dia anterior pendentes!
                         </div>
-                        <button 
-                            onClick={playSound} 
-                            className="ml-2 bg-red-800 px-3 py-1 rounded text-xs hover:bg-red-900 border border-red-400 font-bold transition-colors"
-                            title="Clique para testar e habilitar o som automático"
-                        >
+                        <button onClick={playSound} className="ml-2 bg-red-800 px-3 py-1 rounded text-xs hover:bg-red-900 border border-red-400 font-bold transition-colors">
                             Testar Som / Ativar
                         </button>
                         </div>
                     )}
 
-                    {/* --- CABEÇALHO --- */}
                     <header className="bg-blue-900 text-white p-4 shadow-lg print-hidden">
                         <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
-                        
                         <div className="flex items-center gap-3">
-                            <div className="bg-yellow-400 p-2 rounded-lg text-blue-900">
-                            <Truck className="w-6 h-6" />
-                            </div>
+                            <div className="bg-yellow-400 p-2 rounded-lg text-blue-900"><Truck className="w-6 h-6" /></div>
                             <div>
-                            <h1 className="text-2xl font-bold leading-none">Logística Integrada</h1>
-                            <div className="flex items-center gap-2 mt-1">
-                                <span className={`w-2 h-2 rounded-full ${isLoading ? 'bg-yellow-400 animate-pulse' : 'bg-green-400'}`}></span>
-                                <span className="text-xs text-blue-200 uppercase tracking-wider">
-                                {isLoading ? 'Sincronizando...' : 'Sistema Online'}
-                                </span>
-                            </div>
+                                <h1 className="text-2xl font-bold leading-none">Logística Integrada</h1>
+                                <div className="flex items-center gap-2 mt-1">
+                                    <span className={`w-2 h-2 rounded-full ${isLoading ? 'bg-yellow-400 animate-pulse' : 'bg-green-400'}`}></span>
+                                    <span className="text-xs text-blue-200 uppercase tracking-wider">{isLoading ? 'Sincronizando...' : 'Online'}</span>
+                                </div>
                             </div>
                         </div>
-
                         <div className={`px-6 py-2 rounded-lg flex items-center gap-3 ${pendingCount > 0 ? 'bg-red-600 shadow-lg shadow-red-900/20' : 'bg-green-600 shadow-lg shadow-green-900/20'}`}>
                             <span className="text-3xl font-bold">{pendingCount}</span>
-                            <div className="flex flex-col text-xs font-semibold uppercase leading-tight">
-                            <span>Lotes</span>
-                            <span>Pendentes</span>
-                            </div>
+                            <div className="flex flex-col text-xs font-semibold uppercase leading-tight"><span>Lotes</span><span>Pendentes</span></div>
                         </div>
-
                         </div>
                     </header>
 
-                    {/* --- CONTEÚDO PRINCIPAL --- */}
                     <main className="max-w-6xl mx-auto p-4 print-w-full">
-                        
-                        {/* FORMULÁRIO DE EMISSÃO */}
                         <div className="bg-white rounded-xl shadow-md p-6 mb-6 border-l-4 border-blue-600 print-hidden">
-                        <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
-                            <Package className="w-5 h-5 text-blue-600" /> Nova Emissão
-                        </h2>
-                        
+                        <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2"><Package className="w-5 h-5 text-blue-600" /> Nova Emissão</h2>
                         <form onSubmit={handleAddBatch} className="flex flex-col md:flex-row gap-4 items-end">
                             <div className="flex-1 w-full">
-                            <label className="block text-sm font-semibold text-slate-500 mb-1">Número do Lote / NF</label>
-                            <input 
-                                autoFocus
-                                value={newBatchId}
-                                onChange={e => setNewBatchId(e.target.value)}
-                                placeholder="Ex: 12345ABC"
-                                className="w-full p-3 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-lg uppercase"
-                            />
+                                <label className="block text-sm font-semibold text-slate-500 mb-1">Número do Lote / NF</label>
+                                <input autoFocus value={newBatchId} onChange={e => setNewBatchId(e.target.value)} placeholder="Ex: 12345ABC" className="w-full p-3 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-lg uppercase" />
                             </div>
-
                             <div className="w-full md:w-auto">
-                            <label className="block text-sm font-semibold text-slate-500 mb-1">Tipo de Carga</label>
-                            <div className="flex bg-slate-100 p-1 rounded-lg">
-                                <button
-                                type="button"
-                                onClick={() => setBatchType('LM')}
-                                className={`px-6 py-2 rounded-md font-bold text-sm transition-all ${batchType === 'LM' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-200'}`}
-                                >
-                                LM
-                                </button>
-                                <button
-                                type="button"
-                                onClick={() => setBatchType('BRE')}
-                                className={`px-6 py-2 rounded-md font-bold text-sm transition-all ${batchType === 'BRE' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-200'}`}
-                                >
-                                BRE
-                                </button>
+                                <label className="block text-sm font-semibold text-slate-500 mb-1">Tipo</label>
+                                <div className="flex bg-slate-100 p-1 rounded-lg">
+                                    <button type="button" onClick={() => setBatchType('LM')} className={`px-6 py-2 rounded-md font-bold text-sm transition-all ${batchType === 'LM' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-200'}`}>LM</button>
+                                    <button type="button" onClick={() => setBatchType('BRE')} className={`px-6 py-2 rounded-md font-bold text-sm transition-all ${batchType === 'BRE' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-200'}`}>BRE</button>
+                                </div>
                             </div>
-                            </div>
-
-                            <button 
-                            type="submit" 
-                            disabled={!newBatchId.trim() || isLoading}
-                            className="w-full md:w-auto px-8 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-lg shadow-md transition-colors flex items-center justify-center gap-2"
-                            >
-                            {isLoading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
-                            EMITIR
+                            <button type="submit" disabled={!newBatchId.trim() || isLoading} className="w-full md:w-auto px-8 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold rounded-lg shadow-md transition-colors flex items-center justify-center gap-2">
+                                {isLoading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />} EMITIR
                             </button>
                         </form>
                         </div>
 
-                        {/* BARRA DE FERRAMENTAS */}
                         <div className="flex flex-col md:flex-row justify-between items-center gap-4 mb-6 print-hidden">
-                        
-                        {/* Filtros */}
-                        <div className="flex bg-white p-1 rounded-lg shadow-sm border border-slate-200">
-                            <button onClick={() => setFilterStatus('pending')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filterStatus === 'pending' ? 'bg-red-100 text-red-700' : 'text-slate-500 hover:bg-slate-50'}`}>Pendentes</button>
-                            <button onClick={() => setFilterStatus('dispatched')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filterStatus === 'dispatched' ? 'bg-green-100 text-green-700' : 'text-slate-500 hover:bg-slate-50'}`}>Expedidos</button>
-                            <button onClick={() => setFilterStatus('all')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filterStatus === 'all' ? 'bg-blue-100 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}>Todos</button>
+                            <div className="flex bg-white p-1 rounded-lg shadow-sm border border-slate-200">
+                                <button onClick={() => setFilterStatus('pending')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filterStatus === 'pending' ? 'bg-red-100 text-red-700' : 'text-slate-500 hover:bg-slate-50'}`}>Pendentes</button>
+                                <button onClick={() => setFilterStatus('dispatched')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filterStatus === 'dispatched' ? 'bg-green-100 text-green-700' : 'text-slate-500 hover:bg-slate-50'}`}>Expedidos</button>
+                                <button onClick={() => setFilterStatus('all')} className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${filterStatus === 'all' ? 'bg-blue-100 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}>Todos</button>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={handleExport} className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm shadow-sm transition-colors"><FileSpreadsheet className="w-4 h-4" /> Excel</button>
+                                <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg font-bold text-sm shadow-sm transition-colors"><Printer className="w-4 h-4" /> PDF</button>
+                            </div>
+                            <div className="relative w-full md:w-64">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                <input type="text" placeholder="Buscar lote..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500" />
+                            </div>
                         </div>
 
-                        {/* Ações */}
-                        <div className="flex gap-2">
-                            <button onClick={handleExport} className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm shadow-sm transition-colors">
-                            <FileSpreadsheet className="w-4 h-4" /> Excel
-                            </button>
-                            <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg font-bold text-sm shadow-sm transition-colors">
-                            <Printer className="w-4 h-4" /> PDF
-                            </button>
-                        </div>
-
-                        {/* Busca */}
-                        <div className="relative w-full md:w-64">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                            <input 
-                            type="text" 
-                            placeholder="Buscar lote..." 
-                            value={searchTerm}
-                            onChange={e => setSearchTerm(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500"
-                            />
-                        </div>
-                        </div>
-
-                        {/* LISTAGEM DE LOTES */}
                         <div className="space-y-3">
                         {filteredBatches.length === 0 ? (
                             <div className="text-center py-20 bg-white rounded-xl border-2 border-dashed border-slate-200">
-                            <Package className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                            <p className="text-slate-400 font-medium">Nenhum registro encontrado para o filtro atual.</p>
+                                <Package className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                                <p className="text-slate-400 font-medium">Nenhum registro encontrado.</p>
                             </div>
                         ) : (
                             filteredBatches.map(batch => {
-                            const isCritical = criticalBatches.find(c => c.id === batch.id);
-
-                            return (
-                                <div 
-                                key={batch.id} 
-                                className={`relative bg-white p-4 rounded-xl shadow-sm border-l-4 transition-all hover:shadow-md flex flex-col md:flex-row items-center gap-4 print-shadow-none print-border ${
-                                    batch.status === 'pending' 
-                                    ? (isCritical ? 'border-l-red-800 bg-red-50' : 'border-l-red-500') 
-                                    : 'border-l-green-500 opacity-90'
-                                }`}
-                                >
-                                {/* Informações Principais */}
-                                <div className="flex-1 w-full">
-                                    <div className="flex items-center flex-wrap gap-3 mb-2">
-                                    <span className="text-xl font-bold font-mono text-slate-800 tracking-wide">
-                                        #{batch.code}
-                                    </span>
-                                    
-                                    <span className={`text-xs px-2 py-1 rounded font-bold border ${batch.type === 'LM' ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-indigo-100 text-indigo-700 border-indigo-200'}`}>
-                                        {batch.type}
-                                    </span>
-
-                                    {batch.status === 'pending' ? (
-                                        isCritical ? (
-                                        <span className="flex items-center gap-1 bg-red-800 text-white text-xs px-2 py-1 rounded-full font-bold animate-pulse print-hidden">
-                                            <AlertTriangle className="w-3 h-3" /> ATRASADO
-                                        </span>
-                                        ) : (
-                                        <span className="bg-red-100 text-red-700 text-xs px-2 py-1 rounded-full font-bold uppercase print-hidden">
-                                            Pendente
-                                        </span>
-                                        )
-                                    ) : (
-                                        <span className="flex items-center gap-1 bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full font-bold uppercase print-hidden">
-                                        <CheckCircle className="w-3 h-3" /> Expedido
-                                        </span>
-                                    )}
-                                    </div>
-
-                                    <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-500">
-                                    <div className="flex items-center gap-1">
-                                        <Clock className="w-3 h-3" /> 
-                                        <span className="font-semibold">Entrada:</span> {formatDate(batch.createdAt)}
-                                    </div>
-                                    
-                                    {batch.dispatchedAt && (
-                                        <div className="flex items-center gap-1 text-green-700">
-                                        <Truck className="w-3 h-3" />
-                                        <span className="font-semibold">Saída:</span> {formatDate(batch.dispatchedAt)}
+                                const isCritical = criticalBatches.find(c => c.id === batch.id);
+                                return (
+                                    <div key={batch.id} className={`relative bg-white p-4 rounded-xl shadow-sm border-l-4 transition-all hover:shadow-md flex flex-col md:flex-row items-center gap-4 print-shadow-none print-border ${batch.status === 'pending' ? (isCritical ? 'border-l-red-800 bg-red-50' : 'border-l-red-500') : 'border-l-green-500 opacity-90'}`}>
+                                        <div className="flex-1 w-full">
+                                            <div className="flex items-center flex-wrap gap-3 mb-2">
+                                                <span className="text-xl font-bold font-mono text-slate-800 tracking-wide">#{safeRender(batch.code)}</span>
+                                                <span className={`text-xs px-2 py-1 rounded font-bold border ${batch.type === 'LM' ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-indigo-100 text-indigo-700 border-indigo-200'}`}>{safeRender(batch.type)}</span>
+                                                {batch.status === 'pending' ? (
+                                                    isCritical ? (
+                                                        <span className="flex items-center gap-1 bg-red-800 text-white text-xs px-2 py-1 rounded-full font-bold animate-pulse print-hidden"><AlertTriangle className="w-3 h-3" /> ATRASADO</span>
+                                                    ) : (
+                                                        <span className="bg-red-100 text-red-700 text-xs px-2 py-1 rounded-full font-bold uppercase print-hidden">Pendente</span>
+                                                    )
+                                                ) : (
+                                                    <span className="flex items-center gap-1 bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full font-bold uppercase print-hidden"><CheckCircle className="w-3 h-3" /> Expedido</span>
+                                                )}
+                                            </div>
+                                            <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-500">
+                                                <div className="flex items-center gap-1"><Clock className="w-3 h-3" /> <span className="font-semibold">Entrada:</span> {formatDate(batch.createdAt)}</div>
+                                                {batch.dispatchedAt && (<div className="flex items-center gap-1 text-green-700"><Truck className="w-3 h-3" /><span className="font-semibold">Saída:</span> {formatDate(batch.dispatchedAt)}</div>)}
+                                                {batch.dispatchedBy && (<div className="flex items-center gap-1 text-slate-700"><User className="w-3 h-3" /><span className="font-semibold">Resp:</span> {safeRender(batch.dispatchedBy)}</div>)}
+                                            </div>
                                         </div>
-                                    )}
-
-                                    {batch.dispatchedBy && (
-                                        <div className="flex items-center gap-1 text-slate-700">
-                                        <User className="w-3 h-3" />
-                                        <span className="font-semibold">Resp:</span> {batch.dispatchedBy}
+                                        <div className="print-hidden flex items-center gap-2">
+                                            {batch.status === 'pending' ? (
+                                                <button onClick={() => { setSelectedBatch(batch); setIsModalOpen(true); }} className={`px-6 py-2 rounded-lg font-bold text-white shadow-sm flex items-center gap-2 transition-transform active:scale-95 ${isCritical ? 'bg-red-700 hover:bg-red-800' : 'bg-green-600 hover:bg-green-700'}`}>
+                                                    <Truck className="w-4 h-4" /> {isCritical ? 'RESOLVER' : 'EXPEDIR'}
+                                                </button>
+                                            ) : (
+                                                <button onClick={() => handleDelete(batch.id)} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors" title="Excluir"><Trash2 className="w-5 h-5" /></button>
+                                            )}
                                         </div>
-                                    )}
                                     </div>
-                                </div>
-
-                                {/* Ações */}
-                                <div className="print-hidden flex items-center gap-2">
-                                    {batch.status === 'pending' ? (
-                                    <button 
-                                        onClick={() => {
-                                        setSelectedBatch(batch);
-                                        setIsModalOpen(true);
-                                        }}
-                                        className={`px-6 py-2 rounded-lg font-bold text-white shadow-sm flex items-center gap-2 transition-transform active:scale-95 ${isCritical ? 'bg-red-700 hover:bg-red-800' : 'bg-green-600 hover:bg-green-700'}`}
-                                    >
-                                        <Truck className="w-4 h-4" /> 
-                                        {isCritical ? 'RESOLVER' : 'EXPEDIR'}
-                                    </button>
-                                    ) : (
-                                    <button 
-                                        onClick={() => handleDelete(batch.id)}
-                                        className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
-                                        title="Excluir"
-                                    >
-                                        <Trash2 className="w-5 h-5" />
-                                    </button>
-                                    )
-                                    }
-                                </div>
-                                </div>
-                            );
+                                );
                             })
                         )}
                         </div>
                     </main>
 
-                    {/* --- MODAL DE EXPEDIÇÃO --- */}
                     {isModalOpen && (
                         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4 print-hidden transition-opacity duration-200">
                         <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 transform transition-all scale-100">
                             <div className="flex justify-between items-center mb-6 border-b pb-4">
-                            <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                                <Truck className="text-green-600 w-6 h-6" /> Confirmar Saída
-                            </h3>
-                            <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
-                                <X className="w-6 h-6" />
-                            </button>
+                                <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Truck className="text-green-600 w-6 h-6" /> Confirmar Saída</h3>
+                                <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="w-6 h-6" /></button>
                             </div>
-
                             <div className="bg-slate-50 p-4 rounded-lg mb-6 border border-slate-200 text-center">
-                            <span className="text-xs uppercase font-bold text-slate-400 tracking-wider">Lote Selecionado</span>
-                            <div className="text-3xl font-mono font-bold text-slate-800 mt-1">
-                                {selectedBatch?.code}
+                                <span className="text-xs uppercase font-bold text-slate-400 tracking-wider">Lote Selecionado</span>
+                                <div className="text-3xl font-mono font-bold text-slate-800 mt-1">{safeRender(selectedBatch?.code)}</div>
                             </div>
-                            </div>
-
                             <form onSubmit={handleDispatch}>
-                            <div className="mb-6">
-                                <label className="block text-sm font-bold text-slate-700 mb-2">
-                                Nome do Responsável <span className="text-red-500">*</span>
-                                </label>
-                                <input 
-                                autoFocus
-                                required
-                                value={dispatcherName}
-                                onChange={e => setDispatcherName(e.target.value)}
-                                placeholder="DIGITE SEU NOME"
-                                className="w-full p-4 border-2 border-slate-300 rounded-lg focus:border-green-500 focus:outline-none text-center font-bold uppercase text-lg"
-                                />
-                            </div>
-
-                            <div className="flex gap-3">
-                                <button 
-                                type="button" 
-                                onClick={() => setIsModalOpen(false)}
-                                className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200 transition-colors"
-                                >
-                                CANCELAR
-                                </button>
-                                <button 
-                                type="submit" 
-                                disabled={!dispatcherName.trim() || isLoading}
-                                className="flex-1 py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 shadow-lg shadow-green-200 transition-colors disabled:opacity-50"
-                                >
-                                CONFIRMAR
-                                </button>
-                            </div>
+                                <div className="mb-6">
+                                    <label className="block text-sm font-bold text-slate-700 mb-2">Nome do Responsável <span className="text-red-500">*</span></label>
+                                    <input autoFocus required value={dispatcherName} onChange={e => setDispatcherName(e.target.value)} placeholder="DIGITE SEU NOME" className="w-full p-4 border-2 border-slate-300 rounded-lg focus:border-green-500 focus:outline-none text-center font-bold uppercase text-lg" />
+                                </div>
+                                <div className="flex gap-3">
+                                    <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200 transition-colors">CANCELAR</button>
+                                    <button type="submit" disabled={!dispatcherName.trim() || isLoading} className="flex-1 py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 shadow-lg shadow-green-200 transition-colors disabled:opacity-50">CONFIRMAR</button>
+                                </div>
                             </form>
                         </div>
                         </div>
