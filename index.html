@@ -108,28 +108,41 @@
 
             // --- FUNÇÕES AUXILIARES ---
 
-            // Gerenciador de Áudio
+            // Gerenciador de Áudio Melhorado
             const playSound = () => {
                 try {
                     const AudioContext = window.AudioContext || window.webkitAudioContext;
                     if (!AudioContext) return;
                     
                     const ctx = new AudioContext();
+                    
+                    // Tenta retomar se o navegador suspendeu (comum em autoplays)
+                    if (ctx.state === 'suspended') {
+                        ctx.resume();
+                    }
+
                     const osc = ctx.createOscillator();
                     const gain = ctx.createGain();
 
                     osc.connect(gain);
                     gain.connect(ctx.destination);
 
-                    osc.type = 'square';
-                    osc.frequency.setValueAtTime(880, ctx.currentTime);     // A5
-                    osc.frequency.setValueAtTime(440, ctx.currentTime + 0.1); // A4
+                    const now = ctx.currentTime;
                     
-                    gain.gain.setValueAtTime(0.05, ctx.currentTime);
-                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+                    osc.type = 'square';
+                    
+                    // Bip 1 (Mais agudo)
+                    osc.frequency.setValueAtTime(880, now); // A5
+                    gain.gain.setValueAtTime(0.1, now);
+                    gain.gain.setValueAtTime(0.01, now + 0.1);
 
-                    osc.start();
-                    osc.stop(ctx.currentTime + 0.5);
+                    // Bip 2 (Mais grave, logo em seguida)
+                    osc.frequency.setValueAtTime(440, now + 0.15); // A4
+                    gain.gain.setValueAtTime(0.1, now + 0.15);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+
+                    osc.start(now);
+                    osc.stop(now + 0.6);
                 } catch (e) {
                     console.warn("Áudio bloqueado pelo navegador ou erro:", e);
                 }
@@ -200,12 +213,17 @@
 
             const checkCriticalBatches = (data) => {
                 const today = new Date();
-                today.setHours(0, 0, 0, 0);
+                today.setHours(0, 0, 0, 0); // Zera hora para comparar apenas a data (meia-noite de hoje)
 
                 const critical = data.filter(item => {
+                    // Ignora os já expedidos
                     if (item.status !== 'pending') return false;
+                    
+                    if (!item.createdAt) return false;
                     const createdDate = new Date(item.createdAt);
-                    return createdDate < today; // Criado antes de hoje (ontem ou antes)
+                    
+                    // Se a data de criação for menor que hoje (ou seja, ontem ou antes), é crítico
+                    return createdDate < today; 
                 });
 
                 setCriticalBatches(critical);
@@ -218,9 +236,9 @@
                 return () => clearInterval(interval);
             }, []);
 
+            // Efeito de Áudio (Toca a cada 10s se houver críticos)
             useEffect(() => {
                 if (criticalBatches.length > 0) {
-                    // Tenta tocar som a cada 10 segundos se houver pendências críticas
                     const soundInterval = setInterval(playSound, 10000);
                     return () => clearInterval(soundInterval);
                 }
@@ -358,8 +376,12 @@
                         <div className="text-center font-bold">
                             ATENÇÃO: Existem {criticalBatches.length} lote(s) do dia anterior pendentes!
                         </div>
-                        <button onClick={playSound} className="ml-2 bg-red-800 px-3 py-1 rounded text-xs hover:bg-red-900 border border-red-400">
-                            Testar Som
+                        <button 
+                            onClick={playSound} 
+                            className="ml-2 bg-red-800 px-3 py-1 rounded text-xs hover:bg-red-900 border border-red-400 font-bold transition-colors"
+                            title="Clique para testar e habilitar o som automático"
+                        >
+                            Testar Som / Ativar
                         </button>
                         </div>
                     )}
