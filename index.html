@@ -34,8 +34,11 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // --- CONSTANTES DO SISTEMA ---
-        const DB_ID = 'f055f4783a2855129c04'; 
+        // --- CONFIGURAÇÃO DO BANCO DE DADOS ---
+        // 1. Crie um novo JSON em npoint.io com o conteúdo: []
+        // 2. Copie o ID da URL e cole abaixo entre as aspas.
+        const DB_ID = '642598732497662e240a'; // <--- COLOQUE SEU NOVO ID AQUI
+        
         const API_URL = `https://api.npoint.io/${DB_ID}`;
 
         // --- HELPER DE RENDERIZAÇÃO SEGURA (CORREÇÃO DE ERRO #130) ---
